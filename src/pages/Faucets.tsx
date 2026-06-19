@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ExternalLink, Search, Zap, ArrowLeft, Droplets,
-  Copy, Check, Shield, Clock, Coins,
+  Copy, Check, Shield, Clock, Coins, CheckCircle2,
+  AlertCircle, Loader2,
 } from 'lucide-react';
 
 /* ─── Faucet data ───────────────────────────────────────────────────────────── */
@@ -397,6 +398,81 @@ const FAUCETS: Faucet[] = [
 const CATEGORIES = ['All', 'L1', 'L2', 'Sidechain'] as const;
 type Category = typeof CATEGORIES[number];
 
+/* ─── MetaMask helpers ─────────────────────────────────────────────────────── */
+
+type MetaMaskStatus = 'idle' | 'adding' | 'switching' | 'added' | 'already' | 'error';
+
+interface MetaMaskResult {
+  status: MetaMaskStatus;
+  message: string;
+}
+
+function getEthereum(): (typeof window & { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown>; isMetaMask?: boolean } })['ethereum'] | null {
+  if (typeof window === 'undefined') return null;
+  return (window as typeof window & { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown>; isMetaMask?: boolean } }).ethereum ?? null;
+}
+
+async function addNetworkToMetaMask(faucet: Faucet): Promise<MetaMaskResult> {
+  const ethereum = getEthereum();
+  if (!ethereum) {
+    return { status: 'error', message: 'MetaMask not detected. Install it first.' };
+  }
+
+  const chainIdHex = '0x' + faucet.chainId.toString(16);
+  const nativeCurrency = resolveNativeCurrency(faucet);
+
+  // Try switching first — if chain already exists, this succeeds
+  try {
+    await ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: chainIdHex }],
+    });
+    return { status: 'already', message: `Switched to ${faucet.network}` };
+  } catch (switchError: unknown) {
+    const err = switchError as { code?: number };
+    // 4902 = chain not added yet
+    if (err.code !== 4902) {
+      return { status: 'error', message: err.code === 4001 ? 'User rejected the request' : 'Failed to switch network' };
+    }
+  }
+
+  // Chain not found — add it
+  try {
+    await ethereum.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId: chainIdHex,
+        chainName: faucet.network.replace(/ \(.*\)/, ''), // strip provider suffix
+        nativeCurrency,
+        rpcUrls: [faucet.rpcUrl],
+        blockExplorerUrls: [faucet.explorer],
+      }],
+    });
+    return { status: 'added', message: `${faucet.network} added to MetaMask!` };
+  } catch (addError: unknown) {
+    const err = addError as { code?: number; message?: string };
+    if (err.code === 4001) {
+      return { status: 'error', message: 'User rejected the request' };
+    }
+    return { status: 'error', message: err.message || 'Failed to add network' };
+  }
+}
+
+function resolveNativeCurrency(f: Faucet): { name: string; symbol: string; decimals: number } {
+  const t = f.token.toLowerCase();
+  if (t.includes('eth')) return { name: 'Ether', symbol: 'ETH', decimals: 18 };
+  if (t.includes('bnb')) return { name: 'BNB', symbol: 'BNB', decimals: 18 };
+  if (t.includes('avax')) return { name: 'Avalanche', symbol: 'AVAX', decimals: 18 };
+  if (t.includes('ftm')) return { name: 'Fantom', symbol: 'FTM', decimals: 18 };
+  if (t.includes('matic')) return { name: 'MATIC', symbol: 'MATIC', decimals: 18 };
+  if (t.includes('celo')) return { name: 'CELO', symbol: 'CELO', decimals: 18 };
+  if (t.includes('xdai') || t.includes('dai')) return { name: 'xDAI', symbol: 'xDAI', decimals: 18 };
+  if (t.includes('mnt')) return { name: 'MNT', symbol: 'MNT', decimals: 18 };
+  if (t.includes('metis')) return { name: 'METIS', symbol: 'METIS', decimals: 18 };
+  if (t.includes('dev')) return { name: 'DEV', symbol: 'DEV', decimals: 18 };
+  return { name: f.token, symbol: f.token.replace(/^t/, '').slice(0, 6), decimals: 18 };
+}
+
 /* ─── CopyButton ────────────────────────────────────────────────────────────── */
 
 function CopyButton({ text }: { text: string }) {
@@ -419,6 +495,109 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <Check size={12} /> : <Copy size={12} />}
     </button>
+  );
+}
+
+/* ─── MetaMask Button ──────────────────────────────────────────────────────── */
+
+function AddToMetaMaskButton({ faucet }: { faucet: Faucet }) {
+  const [status, setStatus] = useState<MetaMaskStatus>('idle');
+  const [message, setMessage] = useState('');
+
+  const handleAdd = useCallback(async () => {
+    setStatus('adding');
+    setMessage('');
+    const result = await addNetworkToMetaMask(faucet);
+    setStatus(result.status);
+    setMessage(result.message);
+
+    // Reset after a delay for success states
+    if (result.status === 'added' || result.status === 'already') {
+      setTimeout(() => { setStatus('idle'); setMessage(''); }, 3500);
+    }
+    if (result.status === 'error') {
+      setTimeout(() => { setStatus('idle'); setMessage(''); }, 4500);
+    }
+  }, [faucet]);
+
+  const isSuccess = status === 'added' || status === 'already';
+  const isLoading = status === 'adding' || status === 'switching';
+  const isError = status === 'error';
+
+  const btnBg = isSuccess
+    ? 'hsl(155 65% 48% / 0.15)'
+    : isError
+      ? 'hsl(0 72% 58% / 0.12)'
+      : 'hsl(var(--bg-card))';
+
+  const btnBorder = isSuccess
+    ? 'hsl(155 65% 48% / 0.4)'
+    : isError
+      ? 'hsl(0 72% 58% / 0.4)'
+      : 'hsl(var(--border-medium))';
+
+  const btnColor = isSuccess
+    ? 'hsl(155 65% 48%)'
+    : isError
+      ? 'hsl(0 72% 58%)'
+      : 'hsl(var(--text-secondary))';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <button
+        onClick={handleAdd}
+        disabled={isLoading}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          width: '100%', padding: '8px 0',
+          borderRadius: 6,
+          background: btnBg,
+          border: `1px solid ${btnBorder}`,
+          color: btnColor,
+          fontSize: 11, fontWeight: 600,
+          cursor: isLoading ? 'wait' : 'pointer',
+          fontFamily: 'var(--font-display)',
+          transition: 'all 0.2s',
+          opacity: isLoading ? 0.7 : 1,
+        }}
+        onMouseEnter={(e) => {
+          if (!isLoading && !isSuccess && !isError) {
+            e.currentTarget.style.background = `hsl(${faucet.color} / 0.1)`;
+            e.currentTarget.style.borderColor = `hsl(${faucet.color} / 0.4)`;
+            e.currentTarget.style.color = `hsl(${faucet.color})`;
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!isLoading && !isSuccess && !isError) {
+            e.currentTarget.style.background = 'hsl(var(--bg-card))';
+            e.currentTarget.style.borderColor = 'hsl(var(--border-medium))';
+            e.currentTarget.style.color = 'hsl(var(--text-secondary))';
+          }
+        }}
+      >
+        {isLoading && <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />}
+        {isSuccess && <CheckCircle2 size={12} />}
+        {isError && <AlertCircle size={12} />}
+        {status === 'idle' && (
+          <>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M22.56 3.04L13.45 10.3l1.69-3.97L22.56 3.04z" fill="currentColor" opacity="0.9"/>
+              <path d="M1.46 3.04l9.03 7.35-1.61-4.06L1.46 3.04zM19.23 17.07l-2.42 3.71 5.18 1.43 1.49-5.04-4.25-.1zM.54 17.17L2 22.21l5.18-1.43-2.42-3.71-4.22.1z" fill="currentColor" opacity="0.7"/>
+              <path d="M6.92 10.63L4.9 13.63l5.13.23-.18-5.63-2.93 2.4zM17.06 10.63l-2.98-2.5-.12 5.72 5.12-.23-2.02-2.99z" fill="currentColor" opacity="0.8"/>
+              <path d="M7.18 20.78l3.09-1.51-2.67-2.08-.42 3.59zM13.71 19.27l3.11 1.51-.44-3.59-2.67 2.08z" fill="currentColor" opacity="0.85"/>
+            </svg>
+          </>
+        )}
+        {isLoading
+          ? 'Adding to MetaMask…'
+          : isSuccess
+            ? message
+            : isError
+              ? message
+              : 'Add to MetaMask'
+        }
+      </button>
+    </div>
   );
 }
 
@@ -539,8 +718,12 @@ function FaucetCard({ faucet }: { faucet: Faucet }) {
         </a>
       </div>
 
-      {/* CTA */}
-      <div style={{ padding: '0 16px 14px' }}>
+      {/* CTA buttons */}
+      <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {/* Add to MetaMask */}
+        <AddToMetaMaskButton faucet={faucet} />
+
+        {/* Claim */}
         <a
           href={faucet.url}
           target="_blank"
@@ -689,7 +872,7 @@ export default function Faucets() {
           All EVM Testnet Faucets in One Place
         </h1>
         <p style={{ fontSize: 14, color: 'hsl(var(--text-secondary))', maxWidth: 480, margin: '0 auto' }}>
-          Claim free testnet tokens for {totalNetworks} EVM-compatible chains. Copy RPC URLs, open explorers, and start building.
+          Claim free testnet tokens for {totalNetworks} EVM-compatible chains. Add networks to MetaMask in one click, copy RPC URLs, and start building.
         </p>
       </div>
 
