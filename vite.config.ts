@@ -10,20 +10,28 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: false,
+    target: "esnext",
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    },
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ["react", "react-dom", "react-router-dom"],
-          solana: [
-            "@solana/web3.js",
-            "@solana/wallet-adapter-react",
-            "@solana/wallet-adapter-react-ui",
-          ],
+        manualChunks(id) {
+          if (id.includes("@solana") || id.includes("@coral-xyz")) {
+            return "solana";
+          }
+          if (id.includes("node_modules")) {
+            return "vendor";
+          }
         },
       },
     },
   },
   plugins: [react()],
+  define: {
+    "process.env": {},
+    global: "globalThis",
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
