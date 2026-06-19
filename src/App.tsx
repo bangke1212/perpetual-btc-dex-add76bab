@@ -8,6 +8,7 @@ import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { clusterApiUrl } from '@solana/web3.js';
 import NotFound from './pages/NotFound';
 import Index from './pages/Index';
+import Faucets from './pages/Faucets';
 
 import '@solana/wallet-adapter-react-ui/styles.css';
 
@@ -23,6 +24,7 @@ const App = () => {
                 <WalletModalProvider>
                     <Routes>
                         <Route path="/" element={<Index />} />
+                        <Route path="/faucets" element={<Faucets />} />
                         <Route path="*" element={<NotFound />} />
                     </Routes>
                     <Toaster />

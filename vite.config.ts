@@ -1,27 +1,32 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import componentTagger from "./plugins/component-tagger";
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
-    allowedHosts: true,
-    hmr: {
-      overlay: false,
-      timeout: 15000,
-    },
-    watch: {
-      usePolling: true,
-      interval: 500,
-      binaryInterval: 500,
+  },
+  build: {
+    outDir: "dist",
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom", "react-router-dom"],
+          solana: [
+            "@solana/web3.js",
+            "@solana/wallet-adapter-react",
+            "@solana/wallet-adapter-react-ui",
+          ],
+        },
+      },
     },
   },
-  plugins: [react(), mode === "development" && componentTagger()],
+  plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
     },
   },
-}));
+});

@@ -1,7 +1,8 @@
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { Link } from 'react-router-dom';
 import { PriceData } from '../hooks/useBtcPrice';
-import { Activity, Zap, ChevronDown, Wifi } from 'lucide-react';
+import { Activity, Zap, ChevronDown, Wifi, Droplets } from 'lucide-react';
 
 interface Props {
   priceData: PriceData;
@@ -122,6 +123,25 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
 
       {/* Right controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, marginLeft: 16 }}>
+        {/* Faucets link */}
+        <Link
+          to="/faucets"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '4px 10px', borderRadius: 4,
+            background: 'hsl(217 91% 60% / 0.1)',
+            border: '1px solid hsl(217 91% 60% / 0.2)',
+            color: 'hsl(217 91% 65%)',
+            fontSize: 11, fontWeight: 500,
+            textDecoration: 'none',
+            fontFamily: 'var(--font-display)',
+            transition: 'all 0.15s',
+          }}
+        >
+          <Droplets size={11} />
+          Faucets
+        </Link>
+
         {/* Live indicator */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <div className="live-dot" />
