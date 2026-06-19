@@ -1,0 +1,298 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@layer base {
+  :root {
+    /* Trading Dark Theme */
+    --bg-base: 220 20% 6%;
+    --bg-surface: 220 18% 9%;
+    --bg-panel: 220 16% 11%;
+    --bg-card: 220 14% 13%;
+    --bg-input: 220 14% 15%;
+    --bg-hover: 220 12% 17%;
+
+    --border-subtle: 220 15% 18%;
+    --border-medium: 220 15% 22%;
+
+    --text-primary: 210 30% 96%;
+    --text-secondary: 215 15% 65%;
+    --text-muted: 215 10% 45%;
+    --text-disabled: 215 8% 30%;
+
+    --long: 155 65% 48%;
+    --long-dim: 155 65% 48% / 0.15;
+    --long-hover: 155 65% 42%;
+
+    --short: 0 72% 58%;
+    --short-dim: 0 72% 58% / 0.15;
+    --short-hover: 0 72% 52%;
+
+    --accent: 217 91% 60%;
+    --accent-dim: 217 91% 60% / 0.15;
+
+    --warning: 38 95% 56%;
+    --warning-dim: 38 95% 56% / 0.15;
+
+    --gold: 43 96% 58%;
+
+    /* Shadcn compat */
+    --background: 220 20% 6%;
+    --foreground: 210 30% 96%;
+    --card: 220 14% 13%;
+    --card-foreground: 210 30% 96%;
+    --popover: 220 16% 11%;
+    --popover-foreground: 210 30% 96%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 16% 11%;
+    --secondary-foreground: 210 30% 96%;
+    --muted: 220 14% 15%;
+    --muted-foreground: 215 15% 65%;
+    --accent: 220 14% 15%;
+    --accent-foreground: 210 30% 96%;
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 15% 18%;
+    --input: 220 14% 15%;
+    --ring: 217 91% 60%;
+    --radius: 0.375rem;
+
+    --font-display: 'Space Grotesk', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  body {
+    background-color: hsl(var(--bg-base));
+    color: hsl(var(--text-primary));
+    font-family: var(--font-display);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--bg-base));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border-medium));
+    border-radius: 2px;
+  }
+}
+
+/* ─── Wallet adapter overrides ─── */
+.wallet-adapter-button {
+  font-family: var(--font-display) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  height: 36px !important;
+  padding: 0 16px !important;
+  border-radius: 6px !important;
+  background: hsl(217 91% 60%) !important;
+  color: #fff !important;
+  border: none !important;
+  transition: background 0.15s ease !important;
+}
+.wallet-adapter-button:hover {
+  background: hsl(217 91% 52%) !important;
+}
+.wallet-adapter-button-trigger {
+  color: #fff !important;
+}
+.wallet-adapter-modal-wrapper {
+  background: hsl(var(--bg-surface)) !important;
+  border: 1px solid hsl(var(--border-medium)) !important;
+  border-radius: 12px !important;
+}
+.wallet-adapter-modal-title {
+  color: hsl(var(--text-primary)) !important;
+  font-family: var(--font-display) !important;
+}
+
+/* ─── Trading-specific utilities ─── */
+.font-mono {
+  font-family: var(--font-mono) !important;
+}
+
+.text-long {
+  color: hsl(155 65% 48%);
+}
+.text-short {
+  color: hsl(0 72% 58%);
+}
+.text-accent {
+  color: hsl(217 91% 60%);
+}
+.text-muted-trade {
+  color: hsl(var(--text-muted));
+}
+.text-secondary-trade {
+  color: hsl(var(--text-secondary));
+}
+.text-warning {
+  color: hsl(var(--warning));
+}
+.text-gold {
+  color: hsl(var(--gold));
+}
+
+.bg-long-dim {
+  background: hsl(155 65% 48% / 0.12);
+}
+.bg-short-dim {
+  background: hsl(0 72% 58% / 0.12);
+}
+.bg-panel {
+  background: hsl(var(--bg-panel));
+}
+.bg-surface {
+  background: hsl(var(--bg-surface));
+}
+.bg-card-trade {
+  background: hsl(var(--bg-card));
+}
+.bg-input-trade {
+  background: hsl(var(--bg-input));
+}
+
+.border-subtle {
+  border-color: hsl(var(--border-subtle));
+}
+.border-medium {
+  border-color: hsl(var(--border-medium));
+}
+
+/* ─── Glow effects ─── */
+.glow-long {
+  box-shadow: 0 0 20px hsl(155 65% 48% / 0.2);
+}
+.glow-short {
+  box-shadow: 0 0 20px hsl(0 72% 58% / 0.2);
+}
+.glow-accent {
+  box-shadow: 0 0 20px hsl(217 91% 60% / 0.2);
+}
+
+/* ─── Animations ─── */
+@keyframes price-flash-up {
+  0% { background: hsl(155 65% 48% / 0.3); }
+  100% { background: transparent; }
+}
+@keyframes price-flash-down {
+  0% { background: hsl(0 72% 58% / 0.3); }
+  100% { background: transparent; }
+}
+.flash-up {
+  animation: price-flash-up 0.4s ease-out;
+}
+.flash-down {
+  animation: price-flash-down 0.4s ease-out;
+}
+
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.ticker-scroll {
+  animation: ticker-scroll 30s linear infinite;
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.3s ease-out;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(155 65% 48%);
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+/* ─── Chart area ─── */
+.chart-grid-line {
+  stroke: hsl(220 15% 18%);
+  stroke-dasharray: 4 4;
+}
+.chart-bg {
+  background: hsl(220 20% 7%);
+}
+
+/* ─── Order book rows ─── */
+.ob-row {
+  position: relative;
+  transition: background 0.1s;
+}
+.ob-row:hover {
+  background: hsl(var(--bg-hover)) !important;
+}
+.ob-depth-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  opacity: 0.15;
+  transition: width 0.3s ease;
+}
+
+/* ─── Leverage slider ─── */
+.leverage-slider input[type="range"] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: hsl(var(--border-medium));
+  outline: none;
+}
+.leverage-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: hsl(217 91% 60%);
+  cursor: pointer;
+  border: 2px solid hsl(var(--bg-base));
+  box-shadow: 0 0 8px hsl(217 91% 60% / 0.5);
+}
+
+/* ─── Tab underline ─── */
+.tab-active {
+  border-bottom: 2px solid hsl(217 91% 60%);
+  color: hsl(var(--text-primary));
+}
+.tab-inactive {
+  border-bottom: 2px solid transparent;
+  color: hsl(var(--text-muted));
+}
+
+/* ─── Toggle switch ─── */
+.trade-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border-medium));
+}
