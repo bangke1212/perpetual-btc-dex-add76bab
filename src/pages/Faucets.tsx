@@ -1,9 +1,9 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ExternalLink, Search, Zap, ArrowLeft, Droplets,
   Copy, Check, Shield, Clock, Coins, CheckCircle2,
-  AlertCircle, Loader2,
+  AlertCircle, Loader2, Layers, X, RotateCcw,
 } from 'lucide-react';
 
 /* ─── Faucet data ───────────────────────────────────────────────────────────── */
@@ -473,6 +473,24 @@ function resolveNativeCurrency(f: Faucet): { name: string; symbol: string; decim
   return { name: f.token, symbol: f.token.replace(/^t/, '').slice(0, 6), decimals: 18 };
 }
 
+/* ─── Batch add helpers ────────────────────────────────────────────────────── */
+
+interface BatchNetworkEntry {
+  faucet: Faucet;
+  status: 'pending' | 'adding' | 'added' | 'already' | 'skipped' | 'error';
+  message: string;
+}
+
+/** De-duplicate faucets by chainId, picking the first faucet for each chain */
+function getUniqueNetworks(faucets: Faucet[]): Faucet[] {
+  const seen = new Set<number>();
+  return faucets.filter((f) => {
+    if (seen.has(f.chainId)) return false;
+    seen.add(f.chainId);
+    return true;
+  });
+}
+
 /* ─── CopyButton ────────────────────────────────────────────────────────────── */
 
 function CopyButton({ text }: { text: string }) {
@@ -750,11 +768,438 @@ function FaucetCard({ faucet }: { faucet: Faucet }) {
   );
 }
 
+/* ─── Batch Add All Modal ─────────────────────────────────────────────────── */
+
+function BatchAddModal({
+  networks,
+  onClose,
+}: {
+  networks: Faucet[];
+  onClose: () => void;
+}) {
+  const [entries, setEntries] = useState<BatchNetworkEntry[]>(() =>
+    networks.map((f) => ({ faucet: f, status: 'pending', message: '' }))
+  );
+  const [running, setRunning] = useState(false);
+  const [done, setDone] = useState(false);
+  const cancelledRef = useRef(false);
+
+  const added = entries.filter((e) => e.status === 'added').length;
+  const already = entries.filter((e) => e.status === 'already').length;
+  const errors = entries.filter((e) => e.status === 'error').length;
+  const skipped = entries.filter((e) => e.status === 'skipped').length;
+  const processed = added + already + errors + skipped;
+  const progress = networks.length > 0 ? (processed / networks.length) * 100 : 0;
+
+  const handleStart = useCallback(async () => {
+    const ethereum = getEthereum();
+    if (!ethereum) {
+      setEntries((prev) =>
+        prev.map((e) => ({ ...e, status: 'error' as const, message: 'MetaMask not detected' }))
+      );
+      setDone(true);
+      return;
+    }
+
+    cancelledRef.current = false;
+    setRunning(true);
+    setDone(false);
+
+    for (let i = 0; i < networks.length; i++) {
+      if (cancelledRef.current) {
+        // Mark remaining as skipped
+        setEntries((prev) =>
+          prev.map((e, idx) =>
+            idx >= i && e.status === 'pending'
+              ? { ...e, status: 'skipped' as const, message: 'Cancelled' }
+              : e
+          )
+        );
+        break;
+      }
+
+      // Set current to "adding"
+      setEntries((prev) =>
+        prev.map((e, idx) => (idx === i ? { ...e, status: 'adding' as const } : e))
+      );
+
+      const result = await addNetworkToMetaMask(networks[i]);
+
+      setEntries((prev) =>
+        prev.map((e, idx) =>
+          idx === i ? { ...e, status: result.status as BatchNetworkEntry['status'], message: result.message } : e
+        )
+      );
+
+      // Small delay between requests so MetaMask popups don't stack
+      if (i < networks.length - 1 && !cancelledRef.current) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    }
+
+    setRunning(false);
+    setDone(true);
+  }, [networks]);
+
+  const handleCancel = () => {
+    cancelledRef.current = true;
+  };
+
+  const handleRetryFailed = useCallback(async () => {
+    const failedIndices = entries
+      .map((e, i) => (e.status === 'error' ? i : -1))
+      .filter((i) => i >= 0);
+
+    if (failedIndices.length === 0) return;
+
+    const ethereum = getEthereum();
+    if (!ethereum) return;
+
+    cancelledRef.current = false;
+    setRunning(true);
+    setDone(false);
+
+    for (const idx of failedIndices) {
+      if (cancelledRef.current) break;
+
+      setEntries((prev) =>
+        prev.map((e, i) => (i === idx ? { ...e, status: 'adding' as const, message: '' } : e))
+      );
+
+      const result = await addNetworkToMetaMask(networks[idx]);
+
+      setEntries((prev) =>
+        prev.map((e, i) =>
+          i === idx ? { ...e, status: result.status as BatchNetworkEntry['status'], message: result.message } : e
+        )
+      );
+
+      await new Promise((r) => setTimeout(r, 600));
+    }
+
+    setRunning(false);
+    setDone(true);
+  }, [entries, networks]);
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'rgba(0,0,0,0.65)',
+        backdropFilter: 'blur(6px)',
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget && !running) onClose(); }}
+    >
+      <div
+        className="animate-fade-in-up"
+        style={{
+          background: 'hsl(var(--bg-surface))',
+          border: '1px solid hsl(var(--border-medium))',
+          borderRadius: 14,
+          width: '100%',
+          maxWidth: 520,
+          maxHeight: '80vh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+        }}
+      >
+        {/* Modal header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '16px 20px',
+          borderBottom: '1px solid hsl(var(--border-subtle))',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 8,
+              background: 'linear-gradient(135deg, hsl(217 91% 60% / 0.2), hsl(155 65% 48% / 0.2))',
+              border: '1px solid hsl(217 91% 60% / 0.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Layers size={15} color="hsl(217 91% 60%)" />
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'hsl(var(--text-primary))' }}>
+                Batch Add Networks
+              </div>
+              <div style={{ fontSize: 11, color: 'hsl(var(--text-muted))' }}>
+                {networks.length} unique networks to MetaMask
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => { if (!running) onClose(); }}
+            style={{
+              background: 'hsl(var(--bg-card))',
+              border: '1px solid hsl(var(--border-medium))',
+              borderRadius: 6, width: 28, height: 28,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: running ? 'not-allowed' : 'pointer',
+              color: 'hsl(var(--text-muted))',
+              opacity: running ? 0.4 : 1,
+            }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{
+          padding: '12px 20px',
+          borderBottom: '1px solid hsl(var(--border-subtle))',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 12, color: 'hsl(var(--text-secondary))' }}>
+              {!running && !done ? 'Ready' : done ? 'Complete' : `Processing ${processed + 1} of ${networks.length}...`}
+            </span>
+            <span className="font-mono" style={{ fontSize: 12, fontWeight: 600, color: 'hsl(217 91% 60%)' }}>
+              {processed}/{networks.length}
+            </span>
+          </div>
+          <div style={{
+            height: 6, borderRadius: 3,
+            background: 'hsl(var(--bg-input))',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%', borderRadius: 3,
+              background: errors > 0 && done
+                ? 'linear-gradient(90deg, hsl(155 65% 48%), hsl(38 95% 56%))'
+                : 'linear-gradient(90deg, hsl(217 91% 60%), hsl(155 65% 48%))',
+              width: `${progress}%`,
+              transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+            }} />
+          </div>
+
+          {/* Stats pills */}
+          {(running || done) && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+              {[
+                { label: 'Added', count: added, color: '155 65% 48%' },
+                { label: 'Already exists', count: already, color: '217 91% 60%' },
+                { label: 'Failed', count: errors, color: '0 72% 58%' },
+                { label: 'Skipped', count: skipped, color: '38 95% 56%' },
+              ]
+                .filter((s) => s.count > 0)
+                .map((s) => (
+                  <span
+                    key={s.label}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '3px 10px', borderRadius: 12,
+                      background: `hsl(${s.color} / 0.12)`,
+                      border: `1px solid hsl(${s.color} / 0.25)`,
+                      fontSize: 11, fontWeight: 600,
+                      color: `hsl(${s.color})`,
+                    }}
+                  >
+                    {s.count} {s.label}
+                  </span>
+                ))}
+            </div>
+          )}
+        </div>
+
+        {/* Network list */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+          {entries.map((entry, i) => {
+            const { faucet, status, message } = entry;
+            const statusColor =
+              status === 'added' ? 'hsl(155 65% 48%)'
+                : status === 'already' ? 'hsl(217 91% 60%)'
+                : status === 'error' ? 'hsl(0 72% 58%)'
+                : status === 'skipped' ? 'hsl(38 95% 56%)'
+                : status === 'adding' ? 'hsl(217 91% 60%)'
+                : 'hsl(var(--text-muted))';
+
+            return (
+              <div
+                key={i}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 20px',
+                  borderBottom: i < entries.length - 1 ? '1px solid hsl(var(--border-subtle) / 0.5)' : 'none',
+                  background: status === 'adding' ? 'hsl(217 91% 60% / 0.05)' : 'transparent',
+                  transition: 'background 0.2s',
+                }}
+              >
+                {/* Network icon */}
+                <div style={{
+                  width: 26, height: 26, borderRadius: 6,
+                  background: `hsl(${faucet.color} / 0.12)`,
+                  border: `1px solid hsl(${faucet.color} / 0.25)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 700, color: `hsl(${faucet.color})`,
+                  flexShrink: 0,
+                }}>
+                  {faucet.logo}
+                </div>
+
+                {/* Name + chain id */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'hsl(var(--text-primary))' }}>
+                    {faucet.network}
+                  </div>
+                  <div className="font-mono" style={{ fontSize: 10, color: 'hsl(var(--text-muted))' }}>
+                    Chain {faucet.chainId}
+                  </div>
+                </div>
+
+                {/* Status */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  flexShrink: 0,
+                }}>
+                  {status === 'pending' && (
+                    <span style={{ fontSize: 11, color: 'hsl(var(--text-muted))' }}>Waiting</span>
+                  )}
+                  {status === 'adding' && (
+                    <>
+                      <Loader2 size={13} color={statusColor} style={{ animation: 'spin 1s linear infinite' }} />
+                      <span style={{ fontSize: 11, color: statusColor, fontWeight: 500 }}>Adding...</span>
+                    </>
+                  )}
+                  {status === 'added' && (
+                    <>
+                      <CheckCircle2 size={13} color={statusColor} />
+                      <span style={{ fontSize: 11, color: statusColor, fontWeight: 500 }}>Added</span>
+                    </>
+                  )}
+                  {status === 'already' && (
+                    <>
+                      <Check size={13} color={statusColor} />
+                      <span style={{ fontSize: 11, color: statusColor, fontWeight: 500 }}>Exists</span>
+                    </>
+                  )}
+                  {status === 'error' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, maxWidth: 140 }}>
+                      <AlertCircle size={13} color={statusColor} style={{ flexShrink: 0 }} />
+                      <span style={{
+                        fontSize: 10, color: statusColor, fontWeight: 500,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }} title={message}>
+                        {message || 'Failed'}
+                      </span>
+                    </div>
+                  )}
+                  {status === 'skipped' && (
+                    <>
+                      <span style={{ fontSize: 11, color: statusColor, fontWeight: 500 }}>Skipped</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Actions */}
+        <div style={{
+          display: 'flex', gap: 8,
+          padding: '14px 20px',
+          borderTop: '1px solid hsl(var(--border-subtle))',
+          flexShrink: 0,
+        }}>
+          {!running && !done && (
+            <button
+              onClick={handleStart}
+              style={{
+                flex: 1, padding: '10px 0',
+                borderRadius: 7, border: 'none',
+                background: 'linear-gradient(135deg, hsl(217 91% 60%), hsl(155 65% 48%))',
+                color: '#fff',
+                fontSize: 13, fontWeight: 700,
+                cursor: 'pointer',
+                fontFamily: 'var(--font-display)',
+                boxShadow: '0 0 20px hsl(217 91% 60% / 0.3)',
+                transition: 'opacity 0.15s',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >
+              <Layers size={14} />
+              Add All {networks.length} Networks
+            </button>
+          )}
+
+          {running && (
+            <button
+              onClick={handleCancel}
+              style={{
+                flex: 1, padding: '10px 0',
+                borderRadius: 7,
+                background: 'hsl(0 72% 58% / 0.12)',
+                border: '1px solid hsl(0 72% 58% / 0.3)',
+                color: 'hsl(0 72% 58%)',
+                fontSize: 13, fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'var(--font-display)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}
+            >
+              <X size={14} />
+              Cancel
+            </button>
+          )}
+
+          {done && (
+            <>
+              {errors > 0 && (
+                <button
+                  onClick={handleRetryFailed}
+                  style={{
+                    flex: 1, padding: '10px 0',
+                    borderRadius: 7,
+                    background: 'hsl(38 95% 56% / 0.12)',
+                    border: '1px solid hsl(38 95% 56% / 0.3)',
+                    color: 'hsl(38 95% 56%)',
+                    fontSize: 13, fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font-display)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}
+                >
+                  <RotateCcw size={13} />
+                  Retry {errors} Failed
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                style={{
+                  flex: 1, padding: '10px 0',
+                  borderRadius: 7,
+                  background: 'hsl(155 65% 48% / 0.12)',
+                  border: '1px solid hsl(155 65% 48% / 0.3)',
+                  color: 'hsl(155 65% 48%)',
+                  fontSize: 13, fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font-display)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                <Check size={14} />
+                Done
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main Page ─────────────────────────────────────────────────────────────── */
 
 export default function Faucets() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<Category>('All');
+  const [showBatchModal, setShowBatchModal] = useState(false);
 
   const filtered = useMemo(() => {
     return FAUCETS.filter((f) => {
@@ -770,6 +1215,10 @@ export default function Faucets() {
 
   const totalFaucets = FAUCETS.length;
   const totalNetworks = new Set(FAUCETS.map((f) => f.chainId)).size;
+
+  /** Unique networks for batch add — uses the current filter to be context-aware */
+  const uniqueFiltered = useMemo(() => getUniqueNetworks(filtered), [filtered]);
+  const uniqueAll = useMemo(() => getUniqueNetworks(FAUCETS), []);
 
   return (
     <div style={{
@@ -928,6 +1377,42 @@ export default function Faucets() {
           ))}
         </div>
 
+        {/* Batch add button */}
+        <button
+          onClick={() => setShowBatchModal(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '7px 14px', borderRadius: 6,
+            background: 'linear-gradient(135deg, hsl(217 91% 60% / 0.15), hsl(155 65% 48% / 0.15))',
+            border: '1px solid hsl(217 91% 60% / 0.3)',
+            color: 'hsl(217 91% 65%)',
+            fontSize: 12, fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: 'var(--font-display)',
+            transition: 'all 0.2s',
+            whiteSpace: 'nowrap',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'linear-gradient(135deg, hsl(217 91% 60% / 0.25), hsl(155 65% 48% / 0.25))';
+            e.currentTarget.style.borderColor = 'hsl(217 91% 60% / 0.5)';
+            e.currentTarget.style.boxShadow = '0 0 16px hsl(217 91% 60% / 0.2)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'linear-gradient(135deg, hsl(217 91% 60% / 0.15), hsl(155 65% 48% / 0.15))';
+            e.currentTarget.style.borderColor = 'hsl(217 91% 60% / 0.3)';
+            e.currentTarget.style.boxShadow = 'none';
+          }}
+        >
+          {/* MetaMask fox icon */}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M22.56 3.04L13.45 10.3l1.69-3.97L22.56 3.04z" fill="currentColor" opacity="0.9"/>
+            <path d="M1.46 3.04l9.03 7.35-1.61-4.06L1.46 3.04zM19.23 17.07l-2.42 3.71 5.18 1.43 1.49-5.04-4.25-.1zM.54 17.17L2 22.21l5.18-1.43-2.42-3.71-4.22.1z" fill="currentColor" opacity="0.7"/>
+            <path d="M6.92 10.63L4.9 13.63l5.13.23-.18-5.63-2.93 2.4zM17.06 10.63l-2.98-2.5-.12 5.72 5.12-.23-2.02-2.99z" fill="currentColor" opacity="0.8"/>
+          </svg>
+          <Layers size={12} />
+          Add All ({category === 'All' ? uniqueAll.length : uniqueFiltered.length})
+        </button>
+
         <span style={{ fontSize: 12, color: 'hsl(var(--text-muted))', marginLeft: 'auto' }}>
           Showing {filtered.length} of {totalFaucets}
         </span>
@@ -971,6 +1456,14 @@ export default function Faucets() {
           PerpDEX Faucet Directory — All links open externally. No funds collected.
         </span>
       </div>
+
+      {/* Batch add modal */}
+      {showBatchModal && (
+        <BatchAddModal
+          networks={category === 'All' ? uniqueAll : uniqueFiltered}
+          onClose={() => setShowBatchModal(false)}
+        />
+      )}
     </div>
   );
 }
