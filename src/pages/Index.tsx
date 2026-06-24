@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useBtcPrice } from '../hooks/useBtcPrice';
+import { useBtcPrice, Timeframe } from '../hooks/useBtcPrice';
 import TradingHeader from '../components/TradingHeader';
 import PriceChart from '../components/PriceChart';
 import OrderBook from '../components/OrderBook';
@@ -7,16 +7,31 @@ import TradePanel from '../components/TradePanel';
 import PositionsPanel from '../components/PositionsPanel';
 import MarketTicker from '../components/MarketTicker';
 import { Position } from '../components/TradePanel';
-import { BarChart2, Book, Activity } from 'lucide-react';
+import { BarChart2, Book, Activity, Wifi, WifiOff } from 'lucide-react';
 
 const CHART_TABS = ['1m', '5m', '15m', '1h', '4h', '1D'] as const;
 type ChartTab = typeof CHART_TABS[number];
 
+function tabToTimeframe(tab: ChartTab): Timeframe {
+  const map: Record<ChartTab, Timeframe> = {
+    '1m': '1m',
+    '5m': '5m',
+    '15m': '15m',
+    '1h': '1h',
+    '4h': '4h',
+    '1D': '1d',
+  };
+  return map[tab];
+}
+
 export default function Index() {
-  const { priceData, candles } = useBtcPrice();
+  const [activeChartTab, setActiveChartTab] = useState<ChartTab>('1m');
+  const timeframe = tabToTimeframe(activeChartTab);
+
+  const { priceData, candles, isConnected, isLoading } = useBtcPrice(timeframe);
+
   const [positions, setPositions] = useState<Position[]>([]);
   const [flashClass, setFlashClass] = useState('');
-  const [activeChartTab, setActiveChartTab] = useState<ChartTab>('1m');
   const [rightTab, setRightTab] = useState<'book' | 'info'>('book');
   const prevDir = useRef(priceData.direction);
 
@@ -89,6 +104,7 @@ export default function Index() {
                 <button
                   key={t}
                   onClick={() => setActiveChartTab(t)}
+                  disabled={isLoading}
                   style={{
                     padding: '3px 8px',
                     borderRadius: 4,
@@ -96,9 +112,10 @@ export default function Index() {
                     border: `1px solid ${activeChartTab === t ? 'hsl(var(--border-medium))' : 'transparent'}`,
                     color: activeChartTab === t ? 'hsl(var(--text-primary))' : 'hsl(var(--text-muted))',
                     fontSize: 11, fontWeight: activeChartTab === t ? 600 : 400,
-                    cursor: 'pointer',
+                    cursor: isLoading ? 'wait' : 'pointer',
                     fontFamily: 'var(--font-display)',
                     transition: 'all 0.15s',
+                    opacity: isLoading ? 0.5 : 1,
                   }}
                 >
                   {t}
@@ -130,19 +147,34 @@ export default function Index() {
               </button>
             ))}
 
-            {/* Indicators */}
-            <button style={{
-              background: 'transparent', border: 'none',
-              color: 'hsl(var(--text-muted))', fontSize: 11,
-              cursor: 'pointer', fontFamily: 'var(--font-display)',
-            }}>
-              + Indicators
-            </button>
+            {/* Connection indicator */}
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+              {isConnected ? (
+                <>
+                  <Wifi size={12} style={{ color: 'hsl(155, 65%, 48%)' }} />
+                  <span style={{ fontSize: 10, color: 'hsl(155, 65%, 48%)', fontFamily: 'var(--font-display)' }}>
+                    LIVE
+                  </span>
+                </>
+              ) : (
+                <>
+                  <WifiOff size={12} style={{ color: 'hsl(0, 72%, 58%)' }} />
+                  <span style={{ fontSize: 10, color: 'hsl(0, 72%, 58%)', fontFamily: 'var(--font-display)' }}>
+                    {isLoading ? 'Connecting...' : 'Offline'}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Canvas chart */}
           <div style={{ flex: 1, minHeight: 0 }}>
-            <PriceChart candles={candles} currentPrice={priceData.price} />
+            <PriceChart
+              candles={candles}
+              currentPrice={priceData.price}
+              timeframe={timeframe}
+              isLoading={isLoading}
+            />
           </div>
         </div>
 
