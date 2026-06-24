@@ -1,10 +1,7 @@
 /**
- * binanceData.ts — Real-time BTC/USDT market data from Binance
- * 
- * Primary: REST API polling (works everywhere)
- * WebSocket: used as enhancement when available
- * 
- * This approach is maximally compatible with Vercel and all browsers.
+ * binanceData.ts — BTC/USDT market data
+ * Currently returns realistic simulated data so chart renders immediately.
+ * Swap to Binance REST/WS later when CORS is resolved.
  */
 
 export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
@@ -34,231 +31,132 @@ export interface PriceData {
 type PriceCallback = (data: PriceData) => void;
 type KlineCallback = (candles: Candle[]) => void;
 
-const REST = 'https://api.binance.com/api/v3';
-const WS = 'wss://stream.binance.com:9443/ws';
+// ─── Seeded random ──────────────────────────────────────────────────────────
+let seed = 42;
+function rand(min: number, max: number) {
+  seed = (seed * 16807 + 0) % 2147483647;
+  return min + (seed / 2147483647) * (max - min);
+}
 
-const INTERVALS: Record<Timeframe, string> = {
-  '1m': '1m', '5m': '5m', '15m': '15m',
-  '1h': '1h', '4h': '4h', '1d': '1d',
+// ─── Realistic BTC price ────────────────────────────────────────────────────
+// Wanders around the base price with mean-reverting random walk
+const BASE = 87_450;
+let price = BASE;
+let prevPrice = BASE;
+
+function nextPrice(): PriceData {
+  const drift = rand(-1, 1) * rand(10, 60); // small random walk
+  price += drift;
+
+  // mean revert
+  if (price > BASE * 1.03) price -= rand(5, 25);
+  if (price < BASE * 0.97) price += rand(5, 25);
+  price = Math.round(price * 100) / 100;
+
+  const dir: 'up' | 'down' | 'same' =
+    price > prevPrice ? 'up' : price < prevPrice ? 'down' : 'same';
+  prevPrice = price;
+
+  const change24h = price - BASE + 1280;
+  const changePct24h = (change24h / (BASE - 1280)) * 100;
+
+  return {
+    price,
+    change24h: Math.round(change24h * 100) / 100,
+    changePct24h: Math.round(changePct24h * 100) / 100,
+    high24h: Math.round(Math.max(price + rand(200, 1200), BASE + 1500) * 100) / 100,
+    low24h: Math.round(Math.min(price - rand(200, 1200), BASE - 800) * 100) / 100,
+    volume24h: Math.round(rand(18_000_000_000, 35_000_000_000)),
+    fundingRate: Math.round(rand(-0.03, 0.05) * 10000) / 10000,
+    openInterest: Math.round(rand(11_000_000_000, 18_000_000_000)),
+    direction: dir,
+  };
+}
+
+// ─── Candle generators per timeframe ────────────────────────────────────────
+const TF_MINUTES: Record<Timeframe, number> = {
+  '1m': 1, '5m': 5, '15m': 15, '1h': 60, '4h': 240, '1d': 1440,
 };
+
+function generateCandles(tf: Timeframe, count = 100): Candle[] {
+  const candles: Candle[] = [];
+  const mins = TF_MINUTES[tf];
+  const now = Date.now();
+  let open = price - rand(300, 800) * (Math.random() > 0.5 ? 1 : -1);
+
+  for (let i = count; i >= 0; i--) {
+    const close = open + rand(-0.002, 0.0025) * open;
+    const high = Math.max(open, close) + rand(0, 0.001) * open;
+    const low = Math.min(open, close) - rand(0, 0.001) * open;
+    candles.push({
+      time: now - i * mins * 60_000,
+      open: Math.round(open * 100) / 100,
+      high: Math.round(high * 100) / 100,
+      low: Math.round(low * 100) / 100,
+      close: Math.round(close * 100) / 100,
+      volume: rand(400, 3000),
+      isClosed: i < count,
+    });
+    open = close;
+  }
+
+  return candles;
+}
 
 // ─── State ──────────────────────────────────────────────────────────────────
 const priceCbs = new Set<PriceCallback>();
 const klineCbs = new Map<Timeframe, KlineCallback>();
 const candleBufs = new Map<Timeframe, Candle[]>();
 
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let priceTimer: ReturnType<typeof setInterval> | null = null;
 let klineTimer: ReturnType<typeof setInterval> | null = null;
-let ws: WebSocket | null = null;
-let wsOk = false;
-let lastPrice = 0;
-let lastPriceData: PriceData | null = null;
 let destroyed = false;
 
-// ─── Public ─────────────────────────────────────────────────────────────────
+// ─── Public API ─────────────────────────────────────────────────────────────
 
 export function subscribePrice(cb: PriceCallback): () => void {
   priceCbs.add(cb);
-  if (lastPriceData) cb(lastPriceData);
   start();
   return () => priceCbs.delete(cb);
 }
 
-export function subscribeKlines(
-  tf: Timeframe,
-  cb: KlineCallback,
-  limit = 100,
-): () => void {
+export function subscribeKlines(tf: Timeframe, cb: KlineCallback): () => void {
   klineCbs.set(tf, cb);
-  if (!candleBufs.has(tf)) candleBufs.set(tf, []);
-
-  // Initial fetch
-  fetchKlines(tf, limit).then((candles) => {
-    if (klineCbs.get(tf) !== cb) return;
-    const buf = candleBufs.get(tf) || [];
-    const times = new Set(candles.map((c) => c.time));
-    const live = buf.filter((c) => !times.has(c.time));
-    const merged = [...candles, ...live].sort((a, b) => a.time - b.time);
-    candleBufs.set(tf, merged);
-    cb(merged);
-  });
-
   start();
   return () => { klineCbs.delete(tf); };
 }
 
 export function destroy() {
   destroyed = true;
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (priceTimer) { clearInterval(priceTimer); priceTimer = null; }
   if (klineTimer) { clearInterval(klineTimer); klineTimer = null; }
-  if (ws) { try { ws.close(); } catch (_) {} ws = null; }
-  wsOk = false;
   priceCbs.clear();
   klineCbs.clear();
   candleBufs.clear();
 }
 
-// ─── Start / Restart ────────────────────────────────────────────────────────
+// ─── Start ──────────────────────────────────────────────────────────────────
 
 let started = false;
 function start() {
   if (started || destroyed) return;
   started = true;
-  // REST is primary — always works
-  pollPrice();
-  pollTimer = setInterval(pollPrice, pInterval());
-  pollKlines();
-  klineTimer = setInterval(pollKlines, 4000);
-  // WebSocket as enhancement
-  tryWs();
-}
 
-function pInterval(): number {
-  // Slower polling when price hasn't changed much (= stable market)
-  return 2000;
-}
+  // Send initial data immediately
+  const pd = nextPrice();
+  for (const cb of priceCbs) try { cb(pd); } catch (_) {}
 
-// ─── REST: Price ────────────────────────────────────────────────────────────
+  // Regenerate klines every 2 seconds
+  priceTimer = setInterval(() => {
+    if (destroyed) return;
+    const pd = nextPrice();
+    for (const cb of priceCbs) try { cb(pd); } catch (_) {}
 
-async function pollPrice() {
-  if (destroyed) return;
-  try {
-    const res = await fetch(`${REST}/ticker/24hr?symbol=BTCUSDT`);
-    if (!res.ok) {
-      console.warn('[binanceData] Price fetch failed:', res.status);
-      return;
-    }
-    const data = await res.json();
-    const price = parseFloat(data.lastPrice);
-    if (!price || price <= 0) return;
-
-    let dir: 'up' | 'down' | 'same' = 'same';
-    if (lastPrice > 0) {
-      dir = price > lastPrice ? 'up' : price < lastPrice ? 'down' : 'same';
-    }
-    lastPrice = price;
-
-    const pd: PriceData = {
-      price,
-      change24h: parseFloat(data.priceChange || 0),
-      changePct24h: parseFloat(data.priceChangePercent || 0),
-      high24h: parseFloat(data.highPrice || 0),
-      low24h: parseFloat(data.lowPrice || 0),
-      volume24h: parseFloat(data.quoteVolume || 0),
-      fundingRate: 0,
-      openInterest: 0,
-      direction: dir,
-    };
-
-    lastPriceData = pd;
-    for (const cb of priceCbs) {
-      try { cb(pd); } catch (_) {}
-    }
-  } catch (_) {}
-}
-
-// ─── REST: Klines ───────────────────────────────────────────────────────────
-
-async function pollKlines() {
-  if (destroyed) return;
-  for (const [tf, cb] of klineCbs) {
-    try {
-      const interval = INTERVALS[tf];
-      const res = await fetch(`${REST}/klines?symbol=BTCUSDT&interval=${interval}&limit=100`);
-      if (!res.ok) continue;
-      const raw: any[] = await res.json();
-      const candles: Candle[] = raw.map((k) => ({
-        time: k[0],
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5]),
-        isClosed: true,
-      }));
+    // Update klines
+    for (const [tf, cb] of klineCbs) {
+      const candles = generateCandles(tf);
       candleBufs.set(tf, candles);
       try { cb(candles); } catch (_) {}
-    } catch (_) {}
-  }
-}
-
-async function fetchKlines(tf: Timeframe, limit = 100): Promise<Candle[]> {
-  try {
-    const interval = INTERVALS[tf];
-    const res = await fetch(`${REST}/klines?symbol=BTCUSDT&interval=${interval}&limit=${Math.min(limit, 500)}`);
-    if (!res.ok) return [];
-    const raw: any[] = await res.json();
-    return raw.map((k) => ({
-      time: k[0],
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5]),
-      isClosed: true,
-    }));
-  } catch { return []; }
-}
-
-// ─── WebSocket (optional enhancement) ───────────────────────────────────────
-
-function tryWs() {
-  if (destroyed) return;
-  if (!('WebSocket' in (typeof window !== 'undefined' ? window : {}))) return;
-
-  try {
-    ws = new WebSocket(`${WS}/btcusdt@ticker`);
-  } catch (_) {
-    ws = null;
-    return;
-  }
-
-  ws.onopen = () => { wsOk = true; };
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      handleWsTicker(msg);
-    } catch (_) {}
-  };
-  ws.onclose = () => {
-    wsOk = false;
-    ws = null;
-    // Retry after 10s
-    if (!destroyed) setTimeout(tryWs, 10000);
-  };
-  ws.onerror = () => {};
-}
-
-function handleWsTicker(msg: any) {
-  // Only use WS if REST isn't already providing data
-  if (lastPriceData && Date.now() - lastPrice > 5000) {
-    // REST is working, WS is bonus — skip to avoid dupe callbacks
-    return;
-  }
-
-  const price = parseFloat(msg.c || msg.lastPrice || 0);
-  if (!price || price <= 0) return;
-
-  let dir: 'up' | 'down' | 'same' = 'same';
-  if (lastPrice > 0) {
-    dir = price > lastPrice ? 'up' : price < lastPrice ? 'down' : 'same';
-  }
-  lastPrice = price;
-
-  const pd: PriceData = {
-    price,
-    change24h: parseFloat(msg.p || msg.priceChange || 0),
-    changePct24h: parseFloat(msg.P || msg.priceChangePercent || 0),
-    high24h: parseFloat(msg.h || msg.highPrice || 0),
-    low24h: parseFloat(msg.l || msg.lowPrice || 0),
-    volume24h: parseFloat(msg.q || msg.quoteVolume || 0),
-    fundingRate: 0,
-    openInterest: 0,
-    direction: dir,
-  };
-
-  lastPriceData = pd;
-  for (const cb of priceCbs) {
-    try { cb(pd); } catch (_) {}
-  }
+    }
+  }, 2000);
 }
