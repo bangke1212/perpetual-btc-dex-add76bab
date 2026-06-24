@@ -2,16 +2,15 @@ import { useState, useEffect, useRef } from 'react';
 import {
   subscribePrice,
   subscribeKlines,
-  subscribeStatus,
-  disconnect,
+  destroy,
   type PriceData,
   type Candle,
   type Timeframe,
-} from '../services/binanceWs';
+} from '../services/binanceData';
 
 export type { PriceData, Candle, Timeframe };
 
-const EMPTY_PRICE: PriceData = {
+const EMPTY: PriceData = {
   price: 0,
   change24h: 0,
   changePct24h: 0,
@@ -24,85 +23,75 @@ const EMPTY_PRICE: PriceData = {
 };
 
 export function useBtcPrice(timeframe: Timeframe = '1m') {
-  const [priceData, setPriceData] = useState<PriceData>(EMPTY_PRICE);
+  const [priceData, setPriceData] = useState<PriceData>(EMPTY);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Track whether we've received first data
-  const hasReceivedPrice = useRef(false);
-  const hasReceivedCandles = useRef(false);
+  const hasPrice = useRef(false);
+  const hasCandles = useRef(false);
+  const tPrice = useRef<ReturnType<typeof setTimeout>>();
+  const tCandles = useRef<ReturnType<typeof setTimeout>>();
 
-  // ─── Connection status ──────────────────────────────────────────────────
+  // ─── Price ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    const unsub = subscribeStatus((connected) => {
-      setIsConnected(connected);
-    });
-    return unsub;
-  }, []);
+    hasPrice.current = false;
 
-  // ─── Real-time price ────────────────────────────────────────────────────
-  useEffect(() => {
     const unsub = subscribePrice((data) => {
-      hasReceivedPrice.current = true;
-      setPriceData(data);
-      // Stop loading once we have both price and candles
-      if (hasReceivedCandles.current) {
-        setIsLoading(false);
+      if (!hasPrice.current) {
+        hasPrice.current = true;
+        setIsConnected(true);
+        if (hasCandles.current) setIsLoading(false);
+        if (tPrice.current) clearTimeout(tPrice.current);
       }
+      setPriceData(data);
     });
 
-    // Timeout: if no data after 8s, stop loading anyway
-    const timeout = setTimeout(() => {
-      if (!hasReceivedPrice.current) {
-        setIsLoading(false);
+    tPrice.current = setTimeout(() => {
+      if (!hasPrice.current) {
+        hasPrice.current = true;
+        setIsLoading(false); // stop spinner even if no data
       }
     }, 8000);
 
     return () => {
       unsub();
-      clearTimeout(timeout);
+      if (tPrice.current) clearTimeout(tPrice.current);
     };
   }, []);
 
-  // ─── Klines for active timeframe ────────────────────────────────────────
+  // ─── Klines ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    hasReceivedCandles.current = false;
+    hasCandles.current = false;
     setIsLoading(true);
     setCandles([]);
 
     const unsub = subscribeKlines(timeframe, (newCandles) => {
-      hasReceivedCandles.current = true;
-      setCandles(newCandles);
-      if (hasReceivedPrice.current) {
-        setIsLoading(false);
+      if (!hasCandles.current) {
+        hasCandles.current = true;
+        if (hasPrice.current) setIsLoading(false);
+        if (tCandles.current) clearTimeout(tCandles.current);
       }
+      setCandles(newCandles);
     });
 
-    // Timeout fallback
-    const timeout = setTimeout(() => {
-      if (!hasReceivedCandles.current) {
+    tCandles.current = setTimeout(() => {
+      if (!hasCandles.current) {
+        hasCandles.current = true;
         setIsLoading(false);
       }
     }, 12000);
 
     return () => {
       unsub();
-      clearTimeout(timeout);
+      if (tCandles.current) clearTimeout(tCandles.current);
     };
   }, [timeframe]);
 
-  // ─── Cleanup on unmount ──────────────────────────────────────────────────
+  // ─── Cleanup ────────────────────────────────────────────────────────────
   useEffect(() => {
-    return () => {
-      disconnect();
-    };
+    return () => { destroy(); };
   }, []);
 
-  return {
-    priceData,
-    candles,
-    isConnected,
-    isLoading,
-  };
+  return { priceData, candles, isConnected, isLoading };
 }
