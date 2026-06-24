@@ -4,6 +4,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { Link } from 'react-router-dom';
 import { PriceData } from '../hooks/useBtcPrice';
 import { connectEVM, getAccounts, onAccountsChanged, onDisconnect, detectProvider } from '../services/evmWallet';
+import { connectSolana, disconnectSolana, isSolanaConnected, getSolanaAddress, onSolanaAccountsChanged, onSolanaDisconnect, hasPhantom } from '../services/solanaWallet';
 import { Activity, Zap, ChevronDown, Wifi, Droplets } from 'lucide-react';
 
 interface Props {
@@ -21,7 +22,7 @@ function fmtBig(n: number): string {
   return `$${fmt(n)}`;
 }
 
-// ─── MetaMask Fox Icon ──────────────────────────────────────────────────────
+// ─── MetaMask Fox ───────────────────────────────────────────────────────────
 const MMSvg = ({ size = 18 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 318.6 318.6" style={{ flexShrink: 0 }}>
     <polygon fill="#E2761B" points="274.1,35.5 174.6,109.4 193,65.8" />
@@ -57,7 +58,7 @@ const MMSvg = ({ size = 18 }: { size?: number }) => (
   </svg>
 );
 
-// ─── Phantom Icon ───────────────────────────────────────────────────────────
+// ─── Phantom ────────────────────────────────────────────────────────────────
 const PhantomSvg = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 34 34" fill="none" style={{ flexShrink: 0 }}>
     <circle cx="17" cy="17" r="17" fill="url(#ph-grad2)"/>
@@ -74,50 +75,76 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
   const { setVisible } = useWalletModal();
   const { connected: solConnected, publicKey, disconnect: solDisconnect } = useWallet();
 
-  // ─── EVM state ──────────────────────────────────────────────────────────
+  // ─── EVM ──────────────────────────────────────────────────────────────────
   const [evmAddress, setEvmAddress] = useState<string | null>(null);
   const [evmLoading, setEvmLoading] = useState(false);
-  const [evmError, setEvmError] = useState<string | null>(null);
   const [hasMetaMask, setHasMetaMask] = useState(false);
 
   useEffect(() => {
     setHasMetaMask(!!detectProvider());
-
-    // Check if already authorized
-    getAccounts().then((accs) => {
-      if (accs.length > 0) setEvmAddress(accs[0]);
-    });
-
-    const u1 = onAccountsChanged((accounts) => {
-      if (accounts.length === 0) setEvmAddress(null);
-      else setEvmAddress(accounts[0]);
-    });
+    getAccounts().then((accs) => { if (accs.length > 0) setEvmAddress(accs[0]); });
+    const u1 = onAccountsChanged((accounts) => setEvmAddress(accounts[0] ?? null));
     const u2 = onDisconnect(() => setEvmAddress(null));
-
     return () => { u1(); u2(); };
   }, []);
 
   const handleMetaMask = useCallback(async () => {
     setEvmLoading(true);
-    setEvmError(null);
     try {
       const { address } = await connectEVM();
       setEvmAddress(address);
-    } catch (err: any) {
-      setEvmError(err.message || 'Connection failed');
-      // Don't clear address if user just rejected
-    } finally {
-      setEvmLoading(false);
-    }
+    } catch (err: any) { /* error shown via title */ }
+    finally { setEvmLoading(false); }
   }, []);
 
-  // ─── Derived ────────────────────────────────────────────────────────────
-  const solShort = publicKey
-    ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
+  // ─── Solana (Phantom direct) backup ───────────────────────────────────────
+  const [solAddr, setSolAddr] = useState<string | null>(null);
+  const [solLoading, setSolLoading] = useState(false);
+  const [phantomDetected, setPhantomDetected] = useState(false);
+
+  useEffect(() => {
+    setPhantomDetected(hasPhantom());
+
+    isSolanaConnected().then((yes) => {
+      if (yes) getSolanaAddress().then((a) => { if (a) setSolAddr(a); });
+    });
+
+    const u1 = onSolanaAccountsChanged((pk) => setSolAddr(pk));
+    const u2 = onSolanaDisconnect(() => setSolAddr(null));
+    return () => { u1(); u2(); };
+  }, []);
+
+  const handlePhantom = useCallback(async () => {
+    // Try wallet adapter modal first
+    if (setVisible) {
+      setVisible(true);
+      return;
+    }
+    // Fallback: direct connect
+    setSolLoading(true);
+    try {
+      const { address } = await connectSolana();
+      setSolAddr(address);
+    } catch (_) {}
+    finally { setSolLoading(false); }
+  }, [setVisible]);
+
+  const handleSolDisconnect = useCallback(async () => {
+    if (solDisconnect) {
+      solDisconnect();
+      return;
+    }
+    await disconnectSolana();
+    setSolAddr(null);
+  }, [solDisconnect]);
+
+  // ─── Derived ──────────────────────────────────────────────────────────────
+  const solShort = (publicKey || solAddr)
+    ? `${(publicKey?.toBase58() || solAddr || '').slice(0, 4)}...${(publicKey?.toBase58() || solAddr || '').slice(-4)}`
     : null;
-  const evmShort = evmAddress
-    ? `${evmAddress.slice(0, 6)}...${evmAddress.slice(-4)}`
-    : null;
+  const showSolConnected = solConnected || !!solAddr;
+
+  const evmShort = evmAddress ? `${evmAddress.slice(0, 6)}...${evmAddress.slice(-4)}` : null;
   const isPositive = priceData.changePct24h >= 0;
 
   return (
@@ -125,29 +152,25 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
       background: 'hsl(var(--bg-surface))',
       borderBottom: '1px solid hsl(var(--border-subtle))',
       display: 'flex', alignItems: 'center', height: 56,
-      padding: '0 16px', gap: 0, position: 'sticky', top: 0, zIndex: 100,
+      padding: '0 14px', gap: 0, position: 'sticky', top: 0, zIndex: 100,
     }}>
       {/* Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 24, flexShrink: 0 }}>
-        <div style={{
-          width: 28, height: 28, borderRadius: 6,
-          background: 'linear-gradient(135deg, hsl(220 80% 45%), hsl(195 75% 40%))',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 20, flexShrink: 0 }}>
+        <div style={{ width: 28, height: 28, borderRadius: 6, background: 'linear-gradient(135deg, hsl(220 80% 45%), hsl(195 75% 40%))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Zap size={16} color="#fff" fill="rgba(255,255,255,0.9)" strokeWidth={1.5} />
         </div>
         <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, color: 'hsl(var(--text-primary))', letterSpacing: '-0.02em' }}>PerpDEX</span>
       </div>
 
       {/* Pair */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 6, background: 'hsl(var(--bg-card))', border: '1px solid hsl(var(--border-medium))', cursor: 'pointer', marginRight: 20, flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 6, background: 'hsl(var(--bg-card))', border: '1px solid hsl(var(--border-medium))', cursor: 'pointer', marginRight: 16, flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'hsl(var(--text-primary))' }}>{priceData.symbol}</span>
         <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: 'hsl(220 80% 45% / 0.2)', color: 'hsl(220 80% 30%)', fontWeight: 600 }}>PERP</span>
         <ChevronDown size={12} color="hsl(200,10%,30%)" />
       </div>
 
       {/* Price */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginRight: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginRight: 24 }}>
         <span className={`font-mono ${flashClass}`} style={{ fontSize: 20, fontWeight: 600, color: isPositive ? 'hsl(145 65% 30%)' : 'hsl(0 72% 40%)', letterSpacing: '-0.03em', transition: 'color 0.2s' }}>
           ${fmt(priceData.price)}
         </span>
@@ -157,14 +180,12 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
       </div>
 
       {/* Stats */}
-      <div style={{ display: 'flex', gap: 20, flex: 1, overflowX: 'auto', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 16, flex: 1, overflowX: 'auto', alignItems: 'center' }}>
         {[
           { label: '24h Change', value: `${isPositive ? '+' : ''}$${fmt(Math.abs(priceData.change24h))}`, color: isPositive ? 'hsl(145 65% 30%)' : 'hsl(0 72% 40%)' },
           { label: '24h High', value: `$${fmt(priceData.high24h)}`, color: 'hsl(var(--text-primary))' },
           { label: '24h Low', value: `$${fmt(priceData.low24h)}`, color: 'hsl(var(--text-primary))' },
           { label: '24h Volume', value: fmtBig(priceData.volume24h), color: 'hsl(var(--text-primary))' },
-          { label: 'Open Interest', value: fmtBig(priceData.openInterest), color: 'hsl(var(--text-primary))' },
-          { label: 'Funding Rate', value: `${priceData.fundingRate > 0 ? '+' : ''}${priceData.fundingRate.toFixed(4)}%`, color: priceData.fundingRate >= 0 ? 'hsl(145 65% 30%)' : 'hsl(0 72% 40%)' },
         ].map((s) => (
           <div key={s.label} style={{ flexShrink: 0 }}>
             <div style={{ fontSize: 10, color: 'hsl(var(--text-muted))', marginBottom: 1 }}>{s.label}</div>
@@ -174,74 +195,63 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
       </div>
 
       {/* Right controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, marginLeft: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 12 }}>
         {/* Faucets */}
-        <Link to="/faucets" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 4, background: 'hsl(220 80% 45% / 0.1)', border: '1px solid hsl(220 80% 45% / 0.2)', color: 'hsl(220 80% 30%)', fontSize: 11, fontWeight: 500, textDecoration: 'none', fontFamily: 'var(--font-display)' }}>
+        <Link to="/faucets" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 4, background: 'hsl(220 80% 45% / 0.1)', border: '1px solid hsl(220 80% 45% / 0.2)', color: 'hsl(220 80% 30%)', fontSize: 11, fontWeight: 500, textDecoration: 'none', whiteSpace: 'nowrap' }}>
           <Droplets size={11} /> Faucets
         </Link>
 
         {/* Live */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
           <div className="live-dot" />
           <span style={{ fontSize: 11, color: 'hsl(var(--text-muted))' }}>LIVE</span>
         </div>
 
-        {/* Network */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 4, background: 'hsl(145 65% 30% / 0.1)', border: '1px solid hsl(145 65% 30% / 0.2)' }}>
-          <Wifi size={11} color="hsl(145 65% 30%)" />
-          <span style={{ fontSize: 11, color: 'hsl(145 65% 30%)', fontWeight: 600 }}>Devnet</span>
-        </div>
-
         {/* ─── MetaMask ──────────────────────────────────────────────────── */}
         {evmAddress ? (
-          <button onClick={() => setEvmAddress(null)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, background: 'hsl(var(--bg-card))', border: '1px solid hsl(var(--border-medium))', color: 'hsl(var(--text-primary))', fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-display)' }}>
-            <MMSvg size={16} />
-            {evmShort}
+          <button onClick={() => setEvmAddress(null)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 6, background: 'hsl(var(--bg-card))', border: '1px solid hsl(var(--border-medium))', color: 'hsl(var(--text-primary))', fontSize: 11, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <MMSvg size={14} /> {evmShort}
           </button>
         ) : (
           <button
             onClick={handleMetaMask}
-            disabled={evmLoading}
-            title={!hasMetaMask ? 'Install MetaMask first' : evmError || 'Connect with MetaMask'}
+            disabled={evmLoading || !hasMetaMask}
+            title={!hasMetaMask ? 'Install MetaMask first' : 'Connect with MetaMask'}
             style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '6px 12px', borderRadius: 6,
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 10px', borderRadius: 6,
               background: evmLoading ? 'hsl(33 60% 55%)' : 'hsl(33 80% 48%)',
-              border: 'none', color: '#fff',
-              fontSize: 12, fontWeight: 600,
-              cursor: evmLoading ? 'wait' : hasMetaMask ? 'pointer' : 'not-allowed',
-              fontFamily: 'var(--font-display)',
-              opacity: hasMetaMask ? 1 : 0.6,
-              transition: 'background 0.15s, opacity 0.15s',
+              border: 'none', color: '#fff', fontSize: 11, fontWeight: 600,
+              cursor: !hasMetaMask ? 'not-allowed' : evmLoading ? 'wait' : 'pointer',
+              opacity: hasMetaMask ? 1 : 0.6, transition: 'background 0.15s, opacity 0.15s', whiteSpace: 'nowrap',
             }}
           >
-            <MMSvg size={16} />
-            {evmLoading ? 'Connecting...' : hasMetaMask ? 'MetaMask' : 'No MetaMask'}
+            <MMSvg size={14} />
+            {evmLoading ? 'Connecting...' : !hasMetaMask ? 'No MetaMask' : 'MetaMask'}
           </button>
         )}
 
         {/* ─── Phantom ───────────────────────────────────────────────────── */}
-        {solConnected ? (
-          <button onClick={() => solDisconnect()} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, background: 'hsl(var(--bg-card))', border: '1px solid hsl(var(--border-medium))', color: 'hsl(var(--text-primary))', fontSize: 12, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-display)' }}>
-            <PhantomSvg size={18} />
-            {solShort}
+        {showSolConnected ? (
+          <button onClick={handleSolDisconnect} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 6, background: 'hsl(var(--bg-card))', border: '1px solid hsl(var(--border-medium))', color: 'hsl(var(--text-primary))', fontSize: 11, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <PhantomSvg size={16} /> {solShort}
           </button>
         ) : (
           <button
-            onClick={() => setVisible(true)}
+            onClick={handlePhantom}
+            disabled={solLoading || !phantomDetected}
+            title={!phantomDetected ? 'Install Phantom first' : 'Connect Phantom'}
             style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '6px 16px', borderRadius: 6,
-              background: 'hsl(260 80% 45%)', border: 'none', color: '#fff',
-              fontSize: 13, fontWeight: 600, cursor: 'pointer',
-              fontFamily: 'var(--font-display)',
-              transition: 'background 0.15s',
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '5px 10px', borderRadius: 6,
+              background: solLoading ? 'hsl(260 60% 50%)' : 'hsl(260 80% 45%)',
+              border: 'none', color: '#fff', fontSize: 11, fontWeight: 600,
+              cursor: !phantomDetected ? 'not-allowed' : solLoading ? 'wait' : 'pointer',
+              opacity: phantomDetected ? 1 : 0.6, transition: 'background 0.15s, opacity 0.15s', whiteSpace: 'nowrap',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'hsl(260 80% 38%)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'hsl(260 80% 45%)')}
           >
-            <PhantomSvg size={18} />
-            Connect Wallet
+            <PhantomSvg size={16} />
+            {solLoading ? 'Connecting...' : !phantomDetected ? 'No Phantom' : 'Phantom'}
           </button>
         )}
       </div>
