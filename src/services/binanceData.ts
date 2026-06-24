@@ -40,7 +40,7 @@ function rand(min: number, max: number) {
 
 // ─── Realistic BTC price ────────────────────────────────────────────────────
 // Wanders around the base price with mean-reverting random walk
-const BASE = 87_450;
+const BASE = 62_000;
 let price = BASE;
 let prevPrice = BASE;
 
@@ -57,15 +57,15 @@ function nextPrice(): PriceData {
     price > prevPrice ? 'up' : price < prevPrice ? 'down' : 'same';
   prevPrice = price;
 
-  const change24h = price - BASE + 1280;
-  const changePct24h = (change24h / (BASE - 1280)) * 100;
+  const change24h = price - BASE + 520;
+  const changePct24h = (change24h / (BASE - 520)) * 100;
 
   return {
     price,
     change24h: Math.round(change24h * 100) / 100,
     changePct24h: Math.round(changePct24h * 100) / 100,
-    high24h: Math.round(Math.max(price + rand(200, 1200), BASE + 1500) * 100) / 100,
-    low24h: Math.round(Math.min(price - rand(200, 1200), BASE - 800) * 100) / 100,
+    high24h: Math.round(Math.max(price + rand(200, 800), BASE + 900) * 100) / 100,
+    low24h: Math.round(Math.min(price - rand(200, 800), BASE - 600) * 100) / 100,
     volume24h: Math.round(rand(18_000_000_000, 35_000_000_000)),
     fundingRate: Math.round(rand(-0.03, 0.05) * 10000) / 10000,
     openInterest: Math.round(rand(11_000_000_000, 18_000_000_000)),
