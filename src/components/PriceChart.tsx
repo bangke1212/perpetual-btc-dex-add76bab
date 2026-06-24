@@ -59,18 +59,21 @@ export default function PriceChart({ candles, currentPrice, timeframe, isLoading
     ctx.fillStyle = 'hsl(220, 20%, 7%)';
     ctx.fillRect(0, 0, W, H);
 
-    if (candles.length === 0) {
+    if (candles.length === 0 && W > 0 && H > 0) {
       // Loading / empty state
-      ctx.fillStyle = 'hsl(215, 10%, 45%)';
-      ctx.font = '14px JetBrains Mono, monospace';
+      const statusText = isLoading ? 'Connecting to Binance...' : 'Waiting for data...';
+      ctx.fillStyle = 'hsl(215, 15%, 50%)';
+      ctx.font = '13px JetBrains Mono, monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(
-        isLoading ? 'Connecting to market data...' : 'No data',
-        W / 2,
-        H / 2,
-      );
+      ctx.fillText(statusText, W / 2, H / 2 - 8);
+
+      ctx.fillStyle = 'hsl(215, 10%, 30%)';
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.fillText('BTC/USDT • Binance', W / 2, H / 2 + 12);
       return;
     }
+
+    if (candles.length === 0) return;
 
     const { lo, hi } = yRange;
     const range = hi - lo;

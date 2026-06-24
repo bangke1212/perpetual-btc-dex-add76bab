@@ -1,23 +1,22 @@
 /**
- * Binance WebSocket Service — Real-time BTC/USDT market data
+ * binanceWs.ts — Real-time BTC/USDT market data from Binance
  * 
- * Provides:
- * - Real-time price ticker (mark price, 24h stats)
- * - Real-time kline/candlestick data for multiple timeframes
- * 
- * Binance public WebSocket — no API key required
+ * Strategy:
+ * 1. Try WebSocket first (fast, real-time)
+ * 2. Fallback to REST polling if WS fails
+ * 3. Auto-reconnect on WS disconnect
  */
 
 export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 
 export interface Candle {
-  time: number;    // Open timestamp (ms)
+  time: number;
   open: number;
   high: number;
   low: number;
   close: number;
   volume: number;
-  isClosed: boolean; // true = candle sudah final, false = masih live
+  isClosed: boolean;
 }
 
 export interface PriceData {
@@ -34,167 +33,263 @@ export interface PriceData {
 
 type PriceCallback = (data: PriceData) => void;
 type KlineCallback = (candles: Candle[]) => void;
+type StatusCallback = (connected: boolean) => void;
 
-// Binance WebSocket endpoints
 const WS_BASE = 'wss://stream.binance.com:9443/ws';
 const REST_BASE = 'https://api.binance.com/api/v3';
 
-// Interval mapping
 const INTERVAL_MAP: Record<Timeframe, string> = {
-  '1m': '1m',
-  '5m': '5m',
-  '15m': '15m',
-  '1h': '1h',
-  '4h': '4h',
-  '1d': '1d',
+  '1m': '1m', '5m': '5m', '15m': '15m',
+  '1h': '1h', '4h': '4h', '1d': '1d',
 };
 
-let globalWs: WebSocket | null = null;
-let isConnected = false;
-const priceCallbacks: Set<PriceCallback> = new Set();
-const klineCallbacks: Map<Timeframe, KlineCallback> = new Map();
-const klineStreams: Map<Timeframe, string> = new Map();
-const candleBuffers: Map<Timeframe, Candle[]> = new Map();
+// ─── State ──────────────────────────────────────────────────────────────────
+let ws: WebSocket | null = null;
+let wsConnected = false;
+let usingFallback = false;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let fallbackTimer: ReturnType<typeof setInterval> | null = null;
 
-// Track last price direction
+const priceCbs = new Set<PriceCallback>();
+const klineCbs = new Map<Timeframe, KlineCallback>();
+const statusCbs = new Set<StatusCallback>();
+const candleBuffers = new Map<Timeframe, Candle[]>();
+const subscribedKlineTimeframes = new Set<Timeframe>();
+
 let lastPrice = 0;
+let lastPriceData: PriceData | null = null;
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
-/**
- * Subscribe to real-time price updates (24hr ticker + mark price)
- */
 export function subscribePrice(cb: PriceCallback): () => void {
-  priceCallbacks.add(cb);
+  priceCbs.add(cb);
+  // Immediately send last known data if available
+  if (lastPriceData) cb(lastPriceData);
   ensureConnection();
-  return () => priceCallbacks.delete(cb);
+  return () => priceCbs.delete(cb);
 }
 
-/**
- * Subscribe to real-time kline/candlestick data for a given timeframe.
- * Returns the initial candle history via REST, then streams live updates.
- */
 export function subscribeKlines(
   timeframe: Timeframe,
   cb: KlineCallback,
-  limit: number = 100,
+  limit = 100,
 ): () => void {
-  klineCallbacks.set(timeframe, cb);
-  candleBuffers.set(timeframe, []);
+  klineCbs.set(timeframe, cb);
+  subscribedKlineTimeframes.add(timeframe);
 
-  // Fetch initial candle history
-  fetchHistoricalKlines(timeframe, limit).then((candles) => {
-    if (klineCallbacks.get(timeframe) === cb) {
-      cb(candles);
+  // Initialize buffer if needed
+  if (!candleBuffers.has(timeframe)) {
+    candleBuffers.set(timeframe, []);
+  }
+
+  // Fetch initial history
+  fetchHistory(timeframe, limit).then((candles) => {
+    if (klineCbs.get(timeframe) === cb) {
+      const buffer = candleBuffers.get(timeframe) || [];
+      const historicalTimes = new Set(candles.map((c) => c.time));
+      const newerLive = buffer.filter((c) => !historicalTimes.has(c.time));
+      const merged = [...candles, ...newerLive].sort((a, b) => a.time - b.time);
+      candleBuffers.set(timeframe, merged);
+      cb(merged);
     }
   });
 
-  const streamName = `btcusdt@kline_${INTERVAL_MAP[timeframe]}`;
-  klineStreams.set(timeframe, streamName);
+  // Connect if needed (for live updates)
   ensureConnection();
 
   return () => {
-    klineCallbacks.delete(timeframe);
-    klineStreams.delete(timeframe);
-    candleBuffers.delete(timeframe);
-    // Re-subscribe with updated streams
-    subscribeToStreams();
+    klineCbs.delete(timeframe);
+    subscribedKlineTimeframes.delete(timeframe);
   };
 }
 
-// ─── Connection Management ─────────────────────────────────────────────────
+export function subscribeStatus(cb: StatusCallback): () => void {
+  statusCbs.add(cb);
+  cb(wsConnected || usingFallback);
+  return () => statusCbs.delete(cb);
+}
+
+export function disconnect() {
+  if (ws) {
+    try { ws.close(); } catch (_) { /* ignore */ }
+    ws = null;
+  }
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; }
+  wsConnected = false;
+  usingFallback = false;
+  notifyStatus();
+}
+
+// ─── Connection ─────────────────────────────────────────────────────────────
 
 function ensureConnection() {
-  if (globalWs && (globalWs.readyState === WebSocket.OPEN || globalWs.readyState === WebSocket.CONNECTING)) {
-    // Update streams if already connected
-    subscribeToStreams();
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    subscribeWsStreams();
     return;
   }
-  connect();
+  connectWs();
 }
 
-function connect() {
-  if (globalWs) {
-    try { globalWs.close(); } catch (_) { /* ignore */ }
+function connectWs() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+
+  try {
+    ws = new WebSocket(WS_BASE);
+  } catch (e) {
+    // WebSocket not supported — fallback immediately
+    startFallback();
+    return;
   }
 
-  globalWs = new WebSocket(WS_BASE);
-
-  globalWs.onopen = () => {
-    isConnected = true;
-    subscribeToStreams();
+  ws.onopen = () => {
+    wsConnected = true;
+    usingFallback = false;
+    if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; }
+    subscribeWsStreams();
+    notifyStatus();
   };
 
-  globalWs.onmessage = (e) => {
+  ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
-      handleMessage(msg);
-    } catch (_) { /* ignore malformed */ }
+      handleWsMessage(msg);
+    } catch (_) { /* ignore */ }
   };
 
-  globalWs.onclose = () => {
-    isConnected = false;
-    // Reconnect after 2s
-    setTimeout(connect, 2000);
+  ws.onclose = () => {
+    wsConnected = false;
+    if (!usingFallback) {
+      startFallback();
+    }
+    notifyStatus();
+    // Try reconnect after 3s
+    reconnectTimer = setTimeout(connectWs, 3000);
   };
 
-  globalWs.onerror = () => {
-    globalWs?.close();
+  ws.onerror = () => {
+    // Will trigger onclose
   };
 }
 
-function subscribeToStreams() {
-  if (!globalWs || globalWs.readyState !== WebSocket.OPEN) return;
+function subscribeWsStreams() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
   const streams: string[] = [];
 
-  // Always include ticker
-  if (priceCallbacks.size > 0) {
+  if (priceCbs.size > 0) {
     streams.push('btcusdt@ticker');
   }
 
-  // Include all kline streams
-  for (const streamName of klineStreams.values()) {
-    if (!streams.includes(streamName)) {
-      streams.push(streamName);
-    }
+  for (const tf of subscribedKlineTimeframes) {
+    const stream = `btcusdt@kline_${INTERVAL_MAP[tf]}`;
+    if (!streams.includes(stream)) streams.push(stream);
   }
 
   if (streams.length === 0) return;
 
-  const subMsg = JSON.stringify({
+  ws.send(JSON.stringify({
     method: 'SUBSCRIBE',
     params: streams,
     id: Date.now(),
-  });
-
-  globalWs.send(subMsg);
+  }));
 }
 
-// ─── Message Handler ───────────────────────────────────────────────────────
+// ─── REST Fallback ──────────────────────────────────────────────────────────
 
-function handleMessage(msg: any) {
-  // Ignore subscription confirmations
-  if (msg.result === null && msg.id) return;
+function startFallback() {
+  if (usingFallback) return;
+  usingFallback = true;
+  notifyStatus();
+
+  // Poll price every 2 seconds
+  const poll = async () => {
+    try {
+      const res = await fetch(`${REST_BASE}/ticker/24hr?symbol=BTCUSDT`);
+      if (!res.ok) return;
+      const data = await res.json();
+
+      const price = parseFloat(data.lastPrice);
+      if (price <= 0) return;
+
+      let direction: 'up' | 'down' | 'same' = 'same';
+      if (lastPrice > 0) {
+        direction = price > lastPrice ? 'up' : price < lastPrice ? 'down' : 'same';
+      }
+      lastPrice = price;
+
+      const priceData: PriceData = {
+        price,
+        change24h: parseFloat(data.priceChange || 0),
+        changePct24h: parseFloat(data.priceChangePercent || 0),
+        high24h: parseFloat(data.highPrice || 0),
+        low24h: parseFloat(data.lowPrice || 0),
+        volume24h: parseFloat(data.quoteVolume || 0),
+        fundingRate: 0,
+        openInterest: 0,
+        direction,
+      };
+
+      lastPriceData = priceData;
+
+      for (const cb of priceCbs) {
+        try { cb(priceData); } catch (_) { /* ignore */ }
+      }
+    } catch (_) { /* ignore network errors */ }
+  };
+
+  poll(); // immediate
+  fallbackTimer = setInterval(poll, 2000);
+
+  // Also poll klines every 5s for each subscribed timeframe
+  const pollKlines = async () => {
+    for (const tf of subscribedKlineTimeframes) {
+      try {
+        const interval = INTERVAL_MAP[tf];
+        const res = await fetch(`${REST_BASE}/klines?symbol=BTCUSDT&interval=${interval}&limit=100`);
+        if (!res.ok) continue;
+        const raw: any[] = await res.json();
+        const candles: Candle[] = raw.map((k: any[]) => ({
+          time: k[0],
+          open: parseFloat(k[1]),
+          high: parseFloat(k[2]),
+          low: parseFloat(k[3]),
+          close: parseFloat(k[4]),
+          volume: parseFloat(k[5]),
+          isClosed: true,
+        }));
+
+        candleBuffers.set(tf, candles);
+        const cb = klineCbs.get(tf);
+        if (cb) cb(candles);
+      } catch (_) { /* ignore */ }
+    }
+  };
+
+  pollKlines();
+  setInterval(pollKlines, 5000);
+}
+
+// ─── WebSocket Message Handler ──────────────────────────────────────────────
+
+function handleWsMessage(msg: any) {
+  if (msg.result === null && msg.id) return; // sub confirmation
 
   const stream = msg.stream || msg.e;
 
-  // 24hr ticker
   if (stream === 'btcusdt@ticker' || msg.e === '24hrTicker') {
     handleTicker(msg);
   }
 
-  // Kline
   if (stream?.startsWith('btcusdt@kline_') || msg.e === 'kline') {
     handleKline(msg);
   }
 }
 
 function handleTicker(msg: any) {
-  const price = parseFloat(msg.c || msg.currentClose || 0);
-  if (price === 0) return;
+  const price = parseFloat(msg.c || msg.lastPrice || 0);
+  if (price <= 0) return;
 
-  // Determine direction
   let direction: 'up' | 'down' | 'same' = 'same';
   if (lastPrice > 0) {
     direction = price > lastPrice ? 'up' : price < lastPrice ? 'down' : 'same';
@@ -208,12 +303,14 @@ function handleTicker(msg: any) {
     high24h: parseFloat(msg.h || msg.highPrice || 0),
     low24h: parseFloat(msg.l || msg.lowPrice || 0),
     volume24h: parseFloat(msg.q || msg.quoteVolume || msg.totalTradedQuoteAssetVolume || 0),
-    fundingRate: 0,    // Binance ticker doesn't include funding rate
-    openInterest: 0,    // Binance ticker doesn't include open interest
+    fundingRate: 0,
+    openInterest: 0,
     direction,
   };
 
-  for (const cb of priceCallbacks) {
+  lastPriceData = data;
+
+  for (const cb of priceCbs) {
     try { cb(data); } catch (_) { /* ignore */ }
   }
 }
@@ -223,41 +320,37 @@ function handleKline(msg: any) {
   const interval = k.i || '';
   const isFinal = k.x !== undefined ? k.x : true;
 
-  // Find matching timeframe
   let timeframe: Timeframe | null = null;
-  for (const [tf, streamName] of klineStreams.entries()) {
-    if (streamName.endsWith(`kline_${interval}`)) {
-      timeframe = tf;
+  for (const [tf, tfInterval] of Object.entries(INTERVAL_MAP)) {
+    if (tfInterval === interval) {
+      timeframe = tf as Timeframe;
       break;
     }
   }
   if (!timeframe) return;
 
   const candle: Candle = {
-    time: k.t || k.startTime || Date.now(),
-    open: parseFloat(k.o || k.open || 0),
-    high: parseFloat(k.h || k.high || 0),
-    low: parseFloat(k.l || k.low || 0),
-    close: parseFloat(k.c || k.close || 0),
-    volume: parseFloat(k.v || k.volume || 0),
+    time: k.t || Date.now(),
+    open: parseFloat(k.o || 0),
+    high: parseFloat(k.h || 0),
+    low: parseFloat(k.l || 0),
+    close: parseFloat(k.c || 0),
+    volume: parseFloat(k.v || 0),
     isClosed: isFinal,
   };
 
   const buffer = candleBuffers.get(timeframe) || [];
-  
-  // Update or append
   const idx = buffer.findIndex((c) => c.time === candle.time);
   if (idx >= 0) {
     buffer[idx] = candle;
   } else {
     buffer.push(candle);
-    // Keep buffer size reasonable
     while (buffer.length > 200) buffer.shift();
   }
 
   candleBuffers.set(timeframe, buffer);
 
-  const cb = klineCallbacks.get(timeframe);
+  const cb = klineCbs.get(timeframe);
   if (cb) {
     try { cb([...buffer]); } catch (_) { /* ignore */ }
   }
@@ -265,58 +358,34 @@ function handleKline(msg: any) {
 
 // ─── REST: Fetch Historical Klines ─────────────────────────────────────────
 
-async function fetchHistoricalKlines(
+async function fetchHistory(
   timeframe: Timeframe,
-  limit: number = 100,
+  limit = 100,
 ): Promise<Candle[]> {
   try {
     const interval = INTERVAL_MAP[timeframe];
     const url = `${REST_BASE}/klines?symbol=BTCUSDT&interval=${interval}&limit=${Math.min(limit, 500)}`;
-    
     const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    
+    if (!res.ok) return [];
     const raw: any[] = await res.json();
-    
-    const candles: Candle[] = raw.map((k) => ({
-      time: k[0],        // Open time
+    return raw.map((k) => ({
+      time: k[0],
       open: parseFloat(k[1]),
       high: parseFloat(k[2]),
       low: parseFloat(k[3]),
       close: parseFloat(k[4]),
       volume: parseFloat(k[5]),
-      isClosed: true,     // Historical candles are always closed
+      isClosed: true,
     }));
-
-    // Initialize buffer
-    const existing = candleBuffers.get(timeframe);
-    if (existing) {
-      // Merge: keep historical + any newer live ones
-      const historicalTimes = new Set(candles.map((c) => c.time));
-      const newerLive = existing.filter((c) => !historicalTimes.has(c.time));
-      const merged = [...candles, ...newerLive].sort((a, b) => a.time - b.time);
-      candleBuffers.set(timeframe, merged);
-      return merged;
-    }
-
-    candleBuffers.set(timeframe, candles);
-    return candles;
-  } catch (err) {
-    console.error(`[binanceWs] Failed to fetch historical klines:`, err);
+  } catch {
     return [];
   }
 }
 
-// ─── Cleanup ───────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-export function disconnect() {
-  if (globalWs) {
-    try { globalWs.close(); } catch (_) { /* ignore */ }
-    globalWs = null;
+function notifyStatus() {
+  for (const cb of statusCbs) {
+    try { cb(wsConnected || usingFallback); } catch (_) { /* ignore */ }
   }
-  isConnected = false;
-  priceCallbacks.clear();
-  klineCallbacks.clear();
-  klineStreams.clear();
-  candleBuffers.clear();
 }

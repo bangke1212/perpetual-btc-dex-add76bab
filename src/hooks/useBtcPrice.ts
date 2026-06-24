@@ -1,14 +1,8 @@
-/**
- * useBtcPrice — Real-time BTC/USDT price & candle hook
- * 
- * Powered by Binance public WebSocket & REST API.
- * No API key required.
- */
-
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   subscribePrice,
   subscribeKlines,
+  subscribeStatus,
   disconnect,
   type PriceData,
   type Candle,
@@ -17,8 +11,7 @@ import {
 
 export type { PriceData, Candle, Timeframe };
 
-// Fallback data while connecting
-const FALLBACK_PRICE: PriceData = {
+const EMPTY_PRICE: PriceData = {
   price: 0,
   change24h: 0,
   changePct24h: 0,
@@ -31,38 +24,75 @@ const FALLBACK_PRICE: PriceData = {
 };
 
 export function useBtcPrice(timeframe: Timeframe = '1m') {
-  const [priceData, setPriceData] = useState<PriceData>(FALLBACK_PRICE);
+  const [priceData, setPriceData] = useState<PriceData>(EMPTY_PRICE);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const prevPrice = useRef(0);
 
-  // ─── Subscribe to real-time price ──────────────────────────────────────
+  // Track whether we've received first data
+  const hasReceivedPrice = useRef(false);
+  const hasReceivedCandles = useRef(false);
+
+  // ─── Connection status ──────────────────────────────────────────────────
   useEffect(() => {
-    const unsub = subscribePrice((data) => {
-      setIsConnected(true);
-      setIsLoading(false);
-      prevPrice.current = data.price;
-      setPriceData(data);
+    const unsub = subscribeStatus((connected) => {
+      setIsConnected(connected);
     });
-
     return unsub;
   }, []);
 
-  // ─── Subscribe to klines for the active timeframe ──────────────────────
+  // ─── Real-time price ────────────────────────────────────────────────────
   useEffect(() => {
+    const unsub = subscribePrice((data) => {
+      hasReceivedPrice.current = true;
+      setPriceData(data);
+      // Stop loading once we have both price and candles
+      if (hasReceivedCandles.current) {
+        setIsLoading(false);
+      }
+    });
+
+    // Timeout: if no data after 8s, stop loading anyway
+    const timeout = setTimeout(() => {
+      if (!hasReceivedPrice.current) {
+        setIsLoading(false);
+      }
+    }, 8000);
+
+    return () => {
+      unsub();
+      clearTimeout(timeout);
+    };
+  }, []);
+
+  // ─── Klines for active timeframe ────────────────────────────────────────
+  useEffect(() => {
+    hasReceivedCandles.current = false;
     setIsLoading(true);
     setCandles([]);
 
     const unsub = subscribeKlines(timeframe, (newCandles) => {
-      setIsLoading(false);
+      hasReceivedCandles.current = true;
       setCandles(newCandles);
+      if (hasReceivedPrice.current) {
+        setIsLoading(false);
+      }
     });
 
-    return unsub;
+    // Timeout fallback
+    const timeout = setTimeout(() => {
+      if (!hasReceivedCandles.current) {
+        setIsLoading(false);
+      }
+    }, 12000);
+
+    return () => {
+      unsub();
+      clearTimeout(timeout);
+    };
   }, [timeframe]);
 
-  // ─── Cleanup on unmount ────────────────────────────────────────────────
+  // ─── Cleanup on unmount ──────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       disconnect();
