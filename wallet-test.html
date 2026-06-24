@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wallet Test - PerpDEX</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Space Grotesk', sans-serif; background: #7ec8e3; color: #111; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; min-height: 100vh; }
+  h1 { font-size: 22px; margin-bottom: 8px; }
+  .card { background: rgba(255,255,255,0.7); border-radius: 12px; padding: 24px; margin: 12px 0; width: 100%; max-width: 420px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 8px; border: none; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; margin: 4px; transition: background 0.15s; }
+  .btn-mm { background: #e2761b; }
+  .btn-mm:hover { background: #c9600e; }
+  .btn-ph { background: #534bb1; }
+  .btn-ph:hover { background: #4038a0; }
+  .badge { background: #fff; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-family: monospace; display: inline-flex; align-items: center; gap: 8px; }
+  .err { color: #cc0000; font-size: 12px; margin-top: 6px; }
+  .log { margin-top: 20px; font-size: 12px; color: #333; background: rgba(255,255,255,0.5); padding: 12px; border-radius: 8px; width: 100%; max-width: 420px; max-height: 300px; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<h1>⚡ PerpDEX — Wallet Test</h1>
+<p style="color:#333;margin-bottom:20px">Test MetaMask & Phantom pop-up</p>
+
+<div class="card">
+  <strong>🦊 MetaMask (EVM)</strong>
+  <div id="mm-section">
+    <button class="btn btn-mm" onclick="connectMM()">Connect MetaMask</button>
+  </div>
+  <div id="mm-error" class="err"></div>
+</div>
+
+<div class="card">
+  <strong>👻 Phantom (Solana)</strong>
+  <div id="ph-section">
+    <button class="btn btn-ph" onclick="connectPH()">Connect Phantom</button>
+  </div>
+  <div id="ph-error" class="err"></div>
+</div>
+
+<div class="log" id="log"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+function log(msg) {
+  const l = $('log');
+  l.innerHTML = '[' + new Date().toLocaleTimeString() + '] ' + msg + '<br>' + l.innerHTML;
+}
+
+// ── MetaMask ──
+async function connectMM() {
+  log('Checking MetaMask...');
+  const eth = window.ethereum;
+  if (!eth) {
+    $('mm-error').textContent = 'MetaMask not installed. Install from metamask.io';
+    log('ERROR: window.ethereum is undefined');
+    return;
+  }
+  log('window.ethereum found');
+  try {
+    const accounts = await eth.request({ method: 'eth_requestAccounts' });
+    log('✅ Connected: ' + accounts[0]);
+    $('mm-section').innerHTML = `<div class="badge">🦊 ${accounts[0].slice(0,6)}...${accounts[0].slice(-4)}</div>`;
+
+    // Listen for changes
+    eth.on('accountsChanged', (accs) => {
+      log('Accounts changed: ' + (accs[0] || 'disconnected'));
+      if (!accs[0]) location.reload();
+    });
+    eth.on('disconnect', () => { log('Disconnected'); location.reload(); });
+  } catch (err) {
+    log('ERROR: ' + (err.message || err));
+    $('mm-error').textContent = err.message || 'Connection failed';
+  }
+}
+
+// ── Phantom ──
+async function connectPH() {
+  log('Checking Phantom...');
+  const sol = window.solana || window.phantom?.solana;
+  if (!sol || !sol.isPhantom) {
+    $('ph-error').textContent = 'Phantom not installed. Install from phantom.app';
+    log('ERROR: window.solana is undefined or not Phantom');
+    return;
+  }
+  log('Phantom detected');
+  try {
+    await sol.connect();
+    const pk = sol.publicKey.toString();
+    log('✅ Connected: ' + pk);
+    $('ph-section').innerHTML = `<div class="badge">👻 ${pk.slice(0,4)}...${pk.slice(-4)}</div>`;
+
+    sol.on('accountChanged', (pk) => {
+      log('Account changed: ' + (pk?.toString() || 'disconnected'));
+      if (!pk) location.reload();
+    });
+    sol.on('disconnect', () => { log('Disconnected'); location.reload(); });
+  } catch (err) {
+    log('ERROR: ' + (err.message || err));
+    $('ph-error').textContent = err.message || 'Connection failed';
+  }
+}
+
+// Auto-detect on load
+window.addEventListener('load', () => {
+  const eth = window.ethereum;
+  const sol = window.solana || window.phantom?.solana;
+  log('Page loaded');
+  log('MetaMask: ' + (eth ? '✅ detected' : '❌ not found'));
+  log('Phantom: ' + (sol?.isPhantom ? '✅ detected' : '❌ not found'));
+});
+</script>
+
+</body>
+</html>
