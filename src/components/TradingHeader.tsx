@@ -208,7 +208,7 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
     }}>
       {/* Logo */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 20, flexShrink: 0 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(135deg, ${c('220 80% 45%')}, ${c('195 75% 40%')})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(135deg, ${c('217 91% 60%')}, ${c('195 75% 40%')})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Zap size={16} color="#fff" fill="rgba(255,255,255,0.9)" strokeWidth={1.5} />
         </div>
         <span style={{ fontWeight: 700, fontSize: 15, color: c('var(--text-primary)'), letterSpacing: '-0.02em' }}>PerpDEX</span>
@@ -217,7 +217,7 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
       {/* Pair */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 6, background: c('var(--bg-card)'), border: `1px solid ${c('var(--border-medium)')}`, marginRight: 16, flexShrink: 0 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: c('var(--text-primary)') }}>{priceData.symbol}</span>
-        <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: c('220 80% 45% / 0.2'), color: c('220 80% 30%)'), fontWeight: 600 }}>PERP</span>
+        <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: c('220 80% 45% / 0.2'), color: c('217 91% 70%)'), fontWeight: 600 }}>PERP</span>
         <ChevronDown size={12} color="hsl(200,10%,30%)" />
       </div>
 
@@ -234,7 +234,7 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
       {/* Stats */}
       <div style={{ display: 'flex', gap: 16, flex: 1, overflowX: 'auto', alignItems: 'center' }}>
         {[
-          ['24h Change', `${pos ? '+' : ''}$${fmt(Math.abs(priceData.change24h))}`, pos ? '145 65% 30%' : '0 72% 40%'],
+          ['24h Change', `${pos ? '+' : ''}$${fmt(Math.abs(priceData.change24h))}`, pos ? '155 65% 48%' : '0 72% 58%'],
           ['24h High', `$${fmt(priceData.high24h)}`, 'var(--text-primary)'],
           ['24h Low', `$${fmt(priceData.low24h)}`, 'var(--text-primary)'],
           ['24h Volume', fmtBig(priceData.volume24h), 'var(--text-primary)'],
@@ -248,7 +248,7 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
 
       {/* Right buttons */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 12 }}>
-        <Link to="/faucets" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 4, background: c('220 80% 45% / 0.1'), border: `1px solid ${c('220 80% 45% / 0.2')}`, color: c('220 80% 30%)'), fontSize: 11, fontWeight: 500, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+        <Link to="/faucets" style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 4, background: c('220 80% 45% / 0.1'), border: `1px solid ${c('220 80% 45% / 0.2')}`, color: c('217 91% 70%)'), fontSize: 11, fontWeight: 500, textDecoration: 'none', whiteSpace: 'nowrap' }}>
           <Droplets size={11} /> Faucets
         </Link>
 
