@@ -48,10 +48,10 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 24, flexShrink: 0 }}>
         <div style={{
           width: 28, height: 28, borderRadius: 6,
-          background: 'linear-gradient(135deg, hsl(217 91% 60%), hsl(155 65% 48%))',
+          background: 'linear-gradient(135deg, hsl(220 80% 45%), hsl(195 75% 40%))',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-          <Zap size={14} color="#fff" fill="#fff" />
+          <Zap size={16} color="#fff" fill="rgba(255,255,255,0.9)" strokeWidth={1.5} />
         </div>
         <span style={{
           fontFamily: 'var(--font-display)',
@@ -73,7 +73,7 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
         <span style={{ fontSize: 13, fontWeight: 600, color: 'hsl(var(--text-primary))' }}>BTC/USDT</span>
         <span style={{
           fontSize: 10, padding: '1px 5px', borderRadius: 3,
-          background: 'hsl(217 91% 60% / 0.2)', color: 'hsl(217 91% 70%)',
+          background: 'hsl(220 80% 45% / 0.2)', color: 'hsl(220 80% 30%)',
           fontWeight: 600,
         }}>PERP</span>
         <ChevronDown size={12} color="hsl(215,10%,45%)" />
@@ -129,9 +129,9 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
           style={{
             display: 'flex', alignItems: 'center', gap: 4,
             padding: '4px 10px', borderRadius: 4,
-            background: 'hsl(217 91% 60% / 0.1)',
-            border: '1px solid hsl(217 91% 60% / 0.2)',
-            color: 'hsl(217 91% 65%)',
+            background: 'hsl(220 80% 45% / 0.1)',
+            border: '1px solid hsl(220 80% 45% / 0.2)',
+            color: 'hsl(220 80% 30%)',
             fontSize: 11, fontWeight: 500,
             textDecoration: 'none',
             fontFamily: 'var(--font-display)',
@@ -155,8 +155,8 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
           background: 'hsl(155 65% 48% / 0.1)',
           border: '1px solid hsl(155 65% 48% / 0.2)',
         }}>
-          <Wifi size={11} color="hsl(155 65% 48%)" />
-          <span style={{ fontSize: 11, color: 'hsl(155 65% 48%)', fontWeight: 500 }}>Devnet</span>
+          <Wifi size={11} color="hsl(145 65% 30%)" />
+          <span style={{ fontSize: 11, color: 'hsl(145 65% 30%)', fontWeight: 600 }}>Devnet</span>
         </div>
 
         {/* Wallet */}
@@ -174,7 +174,7 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
               fontFamily: 'var(--font-display)',
             }}
           >
-            <Activity size={12} color="hsl(155 65% 48%)" />
+            <Activity size={12} color="hsl(145 65% 30%)" />
             {shortKey}
           </button>
         ) : (
@@ -182,7 +182,7 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
             onClick={() => setVisible(true)}
             style={{
               padding: '6px 16px', borderRadius: 6,
-              background: 'hsl(217 91% 60%)',
+              background: 'hsl(220 80% 45%)',
               border: 'none',
               color: '#fff',
               fontSize: 13, fontWeight: 600,

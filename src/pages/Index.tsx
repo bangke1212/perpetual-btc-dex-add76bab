@@ -147,9 +147,9 @@ export default function Index() {
 
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
               {isConnected ? (
-                <><Wifi size={12} style={{ color: 'hsl(155, 65%, 48%)' }} /><span style={{ fontSize: 10, color: 'hsl(155, 65%, 48%)' }}>LIVE</span></>
+                <><Wifi size={12} style={{ color: 'hsl(145, 65%, 30%)' }} /><span style={{ fontSize: 10, color: 'hsl(155, 65%, 48%)' }}>LIVE</span></>
               ) : (
-                <><WifiOff size={12} style={{ color: 'hsl(0, 72%, 58%)' }} /><span style={{ fontSize: 10, color: 'hsl(0, 72%, 58%)' }}>{isLoading ? 'Loading...' : 'Offline'}</span></>
+                <><WifiOff size={12} style={{ color: 'hsl(0, 72%, 40%)' }} /><span style={{ fontSize: 10, color: 'hsl(0, 72%, 58%)' }}>{isLoading ? 'Loading...' : 'Offline'}</span></>
               )}
             </div>
           </div>
