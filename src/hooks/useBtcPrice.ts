@@ -6,11 +6,13 @@ import {
   type PriceData,
   type Candle,
   type Timeframe,
+  type CoinSymbol,
 } from '../services/binanceData';
 
-export type { PriceData, Candle, Timeframe };
+export type { PriceData, Candle, Timeframe, CoinSymbol };
 
 const EMPTY: PriceData = {
+  symbol: 'BTC/USDT',
   price: 0,
   change24h: 0,
   changePct24h: 0,
@@ -22,8 +24,8 @@ const EMPTY: PriceData = {
   direction: 'same',
 };
 
-export function useBtcPrice(timeframe: Timeframe = '1m') {
-  const [priceData, setPriceData] = useState<PriceData>(EMPTY);
+export function useCoinPrice(symbol: CoinSymbol, timeframe: Timeframe = '1m') {
+  const [priceData, setPriceData] = useState<PriceData>({ ...EMPTY, symbol });
   const [candles, setCandles] = useState<Candle[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -37,7 +39,7 @@ export function useBtcPrice(timeframe: Timeframe = '1m') {
   useEffect(() => {
     hasPrice.current = false;
 
-    const unsub = subscribePrice((data) => {
+    const unsub = subscribePrice(symbol, (data) => {
       if (!hasPrice.current) {
         hasPrice.current = true;
         setIsConnected(true);
@@ -50,15 +52,15 @@ export function useBtcPrice(timeframe: Timeframe = '1m') {
     tPrice.current = setTimeout(() => {
       if (!hasPrice.current) {
         hasPrice.current = true;
-        setIsLoading(false); // stop spinner even if no data
+        setIsLoading(false);
       }
-    }, 8000);
+    }, 3000);
 
     return () => {
       unsub();
       if (tPrice.current) clearTimeout(tPrice.current);
     };
-  }, []);
+  }, [symbol]);
 
   // ─── Klines ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -66,7 +68,7 @@ export function useBtcPrice(timeframe: Timeframe = '1m') {
     setIsLoading(true);
     setCandles([]);
 
-    const unsub = subscribeKlines(timeframe, (newCandles) => {
+    const unsub = subscribeKlines(symbol, timeframe, (newCandles) => {
       if (!hasCandles.current) {
         hasCandles.current = true;
         if (hasPrice.current) setIsLoading(false);
@@ -80,13 +82,13 @@ export function useBtcPrice(timeframe: Timeframe = '1m') {
         hasCandles.current = true;
         setIsLoading(false);
       }
-    }, 12000);
+    }, 3000);
 
     return () => {
       unsub();
       if (tCandles.current) clearTimeout(tCandles.current);
     };
-  }, [timeframe]);
+  }, [symbol, timeframe]);
 
   // ─── Cleanup ────────────────────────────────────────────────────────────
   useEffect(() => {
