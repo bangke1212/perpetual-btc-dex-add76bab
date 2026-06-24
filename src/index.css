@@ -6,7 +6,7 @@
 
 @layer base {
   :root {
-    /* Trading Dark Theme */
+    /* Dark Theme */
     --bg-base: 0 0% 5%;
     --bg-surface: 0 0% 7%;
     --bg-panel: 0 0% 9%;
@@ -239,7 +239,7 @@
 
 /* ─── Chart area ─── */
 .chart-grid-line {
-  stroke: hsl(220 15% 18%);
+  stroke: hsl(0 0% 15%);
   stroke-dasharray: 4 4;
 }
 .chart-bg {
