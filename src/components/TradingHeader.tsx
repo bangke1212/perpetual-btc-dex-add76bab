@@ -121,10 +121,21 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
   }, []);
 
   const connectMM = useCallback(async () => {
+    const p = getEthProvider();
+    if (!p) {
+      // Open MetaMask in-app browser or download page
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMobile) {
+        // Deep link to MetaMask mobile browser
+        window.location.href = `https://metamask.app.link/dapp/${window.location.host}${window.location.pathname}`;
+      } else {
+        window.open('https://metamask.io/download/', '_blank');
+      }
+      return;
+    }
     setMmBusy(true);
     try {
-      const p = getEthProvider();
-      const accs: string[] = await p!.request({ method: 'eth_requestAccounts' });
+      const accs: string[] = await p.request({ method: 'eth_requestAccounts' });
       if (accs[0]) setMmAddr(accs[0]);
     } catch {}
     setMmBusy(false);
@@ -150,11 +161,22 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
   }, []);
 
   const connectPH = useCallback(async () => {
+    const p = getSolProvider();
+    if (!p) {
+      // Open Phantom browser or download page
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMobile) {
+        // Phantom mobile deep link
+        window.location.href = `https://phantom.app/ul/browse/${window.location.href.replace(/^https?:\/\//, '')}`;
+      } else {
+        window.open('https://phantom.app/download', '_blank');
+      }
+      return;
+    }
     setPhBusy(true);
     try {
-      const p = getSolProvider();
-      await p!.connect();
-      setPhAddr(p!.publicKey?.toString() || '');
+      await p.connect();
+      setPhAddr(p.publicKey?.toString() || '');
     } catch {}
     setPhBusy(false);
   }, []);
@@ -242,10 +264,10 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
           </button>
         ) : (
           <button
-            onClick={connectMM} disabled={!mmOk || mmBusy}
-            style={{ ...btn(mmBusy ? 'hsl(33,60%,55%)' : 'hsl(33,80%,48%)', 'hsl(33,80%,40%)'), opacity: mmOk ? 1 : .6, cursor: mmOk ? mmBusy ? 'wait' : 'pointer' : 'not-allowed' }}
+            onClick={connectMM} disabled={mmBusy}
+            style={{ ...btn(mmBusy ? 'hsl(33,60%,55%)' : 'hsl(33,80%,48%)', 'hsl(33,80%,40%)'), opacity: 1, cursor: mmBusy ? 'wait' : 'pointer' }}
           >
-            <Fox s={14} /> {mmBusy ? 'Connecting...' : mmOk ? 'MetaMask' : 'No MetaMask'}
+            <Fox s={14} /> {mmBusy ? 'Connecting...' : mmOk ? 'MetaMask' : 'Install MetaMask'}
           </button>
         )}
 
@@ -256,10 +278,10 @@ export default function TradingHeader({ priceData, flashClass }: Props) {
           </button>
         ) : (
           <button
-            onClick={connectPH} disabled={!phOk || phBusy}
-            style={{ ...btn(phBusy ? 'hsl(260,60%,50%)' : 'hsl(260,80%,45%)', 'hsl(260,80%,38%)'), opacity: phOk ? 1 : .6, cursor: phOk ? phBusy ? 'wait' : 'pointer' : 'not-allowed' }}
+            onClick={connectPH} disabled={phBusy}
+            style={{ ...btn(phBusy ? 'hsl(260,60%,50%)' : 'hsl(260,80%,45%)', 'hsl(260,80%,38%)'), opacity: 1, cursor: phBusy ? 'wait' : 'pointer' }}
           >
-            <Ghost s={16} /> {phBusy ? 'Connecting...' : phOk ? 'Phantom' : 'No Phantom'}
+            <Ghost s={16} /> {phBusy ? 'Connecting...' : phOk ? 'Phantom' : 'Install Phantom'}
           </button>
         )}
       </div>
